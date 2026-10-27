@@ -1,0 +1,27 @@
+{
+  "name": "dormkartz",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Arcade kart racer for the browser",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node e2e/smoke.mjs",
+    "plot": "esbuild scripts/plot-tracks.ts --bundle --platform=node --format=esm --outfile=plots/plot.mjs --log-level=warning && node plots/plot.mjs",
+    "report": "esbuild scripts/race-report.ts --bundle --platform=node --format=esm --outfile=plots/report.mjs --log-level=warning && node plots/report.mjs"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "5.0.3"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  }
+}
