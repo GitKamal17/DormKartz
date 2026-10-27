@@ -11,7 +11,7 @@ const p = new PathBuilder('starlight-ribbon', 18)
   .mark('drop')
   .straight(60, { dy: -18 })
   .right(32, 210, { dy: 4 })
-  .straight(50)
+  .straight(90)
   .left(30, 90, { dy: 4 })
   .mark('jump')
   .straight(50, { dy: 2 })
@@ -25,6 +25,7 @@ const p = new PathBuilder('starlight-ribbon', 18)
   .left(30, 40, { dy: 3 })
   .straight(40, { adjust: true })
   .right(36, 90)
+  .straight(40)
   .build();
 
 export const starlightRibbon: TrackDef = {

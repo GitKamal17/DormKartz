@@ -45,6 +45,8 @@ export class PathBuilder {
     private readonly name: string,
     private readonly startWidth: number,
     private readonly start: { x: number; y: number; z: number; heading: number } = { x: 0, y: 0, z: 0, heading: 0 },
+    /** How far down the first straight the start line goes. */
+    private readonly startLead = 48,
   ) {}
 
   straight(len: number, opts: SegOpts = {}): this {
@@ -168,11 +170,18 @@ export class PathBuilder {
       cum += len;
     }
     const total = cum;
+    // Put the start line partway down the first straight so the starting grid
+    // (which sits behind the line) is on the straight, not in the last corner.
+    const lead = segs[0].kind === 'S' ? Math.min(this.startLead, segs[0].len * 0.6) : 0;
+    const k = Math.round(lead / (segs[0].len / Math.max(1, Math.round(segs[0].len / STEP))));
+    const leadExact = k * (segs[0].len / Math.max(1, Math.round(segs[0].len / STEP)));
+    const rotated = k > 0 ? [...pts.slice(k), ...pts.slice(0, k)] : pts;
     const marks: Record<string, number> = {};
     for (const [name, segIdx] of this.labels) {
-      marks[name] = (segIdx < segStartLen.length ? segStartLen[segIdx] : total) / total;
+      const at = segIdx < segStartLen.length ? segStartLen[segIdx] : total;
+      marks[name] = (((at - leadExact) / total) % 1 + 1) % 1;
     }
-    return { points: pts, marks, length: total, adjusted: usedAdjust.map((i) => segs[i].len) };
+    return { points: rotated, marks, length: total, adjusted: usedAdjust.map((i) => segs[i].len) };
   }
 
   private headingAt(segs: Seg[], idx: number): number {

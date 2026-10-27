@@ -34,6 +34,7 @@ const loc = newLoc();
 const loc2 = newLoc();
 const pose = newPose();
 const order: KartState[] = [];
+const CAR_OFFSETS = [-1.3, 1.3] as const;
 
 export function createRace(config: RaceConfig, seed: number): RaceState {
   const track = getTrack(config.trackId);
@@ -636,7 +637,7 @@ function hazardCollisions(st: RaceState, track: Track): void {
           trafficPose(track, h, c, st.tick, pose);
           if (Math.abs(k.y - pose.y) > 2) continue;
           const hx = Math.sin(pose.heading), hzz = Math.cos(pose.heading);
-          for (const off of [-1.3, 1.3]) {
+          for (const off of CAR_OFFSETS) {
             const cx = pose.x + hx * off, cz = pose.z + hzz * off;
             const dx = k.x - cx, dz = k.z - cz;
             if (dx * dx + dz * dz < (1.35 + R) ** 2) {

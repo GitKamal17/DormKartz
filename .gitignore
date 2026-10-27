@@ -2,6 +2,7 @@ node_modules
 dist
 test-results
 e2e/screenshots
+e2e/smoke.log
+plots
 *.log
 .DS_Store
-plots
