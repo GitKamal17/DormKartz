@@ -16,7 +16,8 @@ const p = new PathBuilder('magma-keep', 21)
   .right(25, 90)
   .mark('crush2')
   .straight(60, { dy: -3 })
-  .right(32, 90)
+  .mark('court')
+  .right(40, 90)
   .mark('lava2')
   .straight(150, { adjust: true, dy: -3 })
   .mark('lava2End')
@@ -38,10 +39,14 @@ export const magmaKeep: TrackDef = {
   autoBank: 0.5,
   grip: 1,
   edges: [
+    { from: at(p, 'court', 6), to: at(p, 'lava2', -6), side: 'right', shoulder: 22 },
     { from: at(p, 'lava1', 0), to: at(p, 'lava1End', 0), side: 'both', wall: false, shoulder: 1 },
     { from: at(p, 'lava2', 0), to: at(p, 'lava2End', 0), side: 'left', wall: false, shoulder: 2 },
   ],
+  gaps: [{ from: at(p, 'lava1', 30), to: at(p, 'lava1', 39) }],
+  ramps: [{ u: at(p, 'lava1', 28), height: 2, length: 10 }],
   boostPads: [
+    { u: at(p, 'lava1', 12), d: 0, width: 8 },
     { u: at(p, 'start', 40), d: 0 },
     { u: at(p, 'lava2End', 10), d: -3 },
   ],

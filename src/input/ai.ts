@@ -151,7 +151,7 @@ export class AIInput implements InputSource {
     }
 
     // --- Getting unstuck -------------------------------------------------------
-    if (speed < 2 && k.hit === null && k.grounded) this.stuckTicks++;
+    if (Math.abs(speed) < 2 && k.hit === null && k.grounded && this.reverseTicks === 0) this.stuckTicks++;
     else this.stuckTicks = 0;
     if (this.stuckTicks > 45) {
       this.reverseTicks = 40;

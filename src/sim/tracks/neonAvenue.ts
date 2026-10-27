@@ -21,6 +21,7 @@ const p = new PathBuilder('neon-avenue', 24)
   .mark('chicane')
   .left(30, 45)
   .right(30, 45)
+  .mark('chicaneEnd')
   .straight(50)
   .right(26, 90)
   .build();
@@ -38,6 +39,8 @@ export const neonAvenue: TrackDef = {
   walls: true,
   autoBank: 0.3,
   grip: 1,
+  edges: [{ from: at(p, 'chicane', -10), to: at(p, 'chicaneEnd', 10), side: 'both', shoulder: 18 }],
+  ramps: [{ u: at(p, 'long', 125), height: 1.5, width: 10, d: 5 }],
   tunnels: [{ from: at(p, 'tunnel', -4), to: at(p, 'tunnelEnd', 4) }, { from: at(p, 'long', 40), to: at(p, 'long', 100) }],
   boostPads: [
     { u: at(p, 'start', 60), d: -6 },

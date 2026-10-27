@@ -2,7 +2,7 @@
 // The result is consumed by physics (locate/groundY), AI (racing line) and the
 // renderer (mesh generation).
 
-import { clamp, mod, wrapAngle } from '../math';
+import { clamp, loopDelta, mod, wrapAngle } from '../math';
 import type { HitKind } from '../types';
 import type { ControlPoint, TrackDef, URange } from './types';
 
@@ -325,21 +325,28 @@ export function buildTrack(def: TrackDef): Track {
   const rl = track.racingLine;
   for (let j = 0; j < n; j++) rl[j] = clamp(curv[j] * 26, -1, 1) * Math.max(0, hw[j] - 3);
   smoothArray(rl, 18, 3);
-  const avoid = () => {
+  // Pass each slow zone on one side for its whole length: the side the line
+  // wants to be on as it leaves the zone.
+  const zoneSide = slows.map((z) => {
+    const exit = rl[mod(Math.round((z.s1 + 25) / ds), n)];
+    return exit >= (z.dMin + z.dMax) / 2 ? 1 : -1;
+  });
+  // `lead` widens the avoided stretch so the line starts moving over early.
+  const avoid = (lead: number) => {
     for (let j = 0; j < n; j++) {
       const s = j * ds;
-      const z = slowAt[j] >= 0 ? slows[slowAt[j]] : null;
       const lim = hw[j] - 2.2;
-      if (z) {
+      slows.forEach((z, zi) => {
+        const into = loopDelta(z.s0 - lead, s, L);
+        const span = mod(z.s1 - z.s0, L) + lead + lead / 2;
+        if (into < 0 || into > span) return;
         const lo = z.dMin - 3, hi = z.dMax + 3;
-        if (rl[j] > lo && rl[j] < hi) rl[j] = rl[j] - lo < hi - rl[j] ? lo : hi;
-        if (rl[j] < -lim) rl[j] = hi;
-        if (rl[j] > lim) rl[j] = lo;
-      }
+        if (rl[j] > lo && rl[j] < hi) rl[j] = zoneSide[zi] > 0 ? hi : lo;
+      });
       for (const h of track.hazards) {
         if (h.kind !== 'crate') continue;
-        const delta = Math.abs(((s - h.s + L * 1.5) % L) - L / 2);
-        if (delta < h.radius + 6) {
+        const delta = Math.abs(loopDelta(h.s, s, L));
+        if (delta < h.radius + 6 + lead / 2) {
           const lo = h.d - h.radius - 3, hi = h.d + h.radius + 3;
           if (rl[j] > lo && rl[j] < hi) rl[j] = rl[j] - lo < hi - rl[j] && lo > -lim ? lo : hi < lim ? hi : lo;
         }
@@ -347,11 +354,11 @@ export function buildTrack(def: TrackDef): Track {
       rl[j] = clamp(rl[j], -lim, lim);
     }
   };
-  avoid();
-  smoothArray(rl, 6, 2);
-  avoid();
+  avoid(24);
+  smoothArray(rl, 10, 2);
+  avoid(0);
   smoothArray(rl, 2, 1);
-  avoid();
+  avoid(0);
 
   // 9. Item boxes.
   for (const u of def.itemRows) {
