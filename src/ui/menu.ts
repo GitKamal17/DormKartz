@@ -35,6 +35,8 @@ export interface Screen {
   extra?: (root: HTMLElement) => (() => void) | void;
   /** Where the item list goes relative to extra content. */
   layout?: 'stack' | 'side';
+  /** Items are laid out in a row (left/right also navigate). */
+  horizontal?: boolean;
   footer?: string;
 }
 
@@ -206,10 +208,10 @@ export class Menu {
         this.setFocus(this.focus + cols);
         break;
       case 'left':
-        if (!this.adjust(-1) && cols > 1) this.setFocus(this.focus - 1);
+        if (!this.adjust(-1) && (cols > 1 || s.horizontal)) this.setFocus(this.focus - 1);
         break;
       case 'right':
-        if (!this.adjust(1) && cols > 1) this.setFocus(this.focus + 1);
+        if (!this.adjust(1) && (cols > 1 || s.horizontal)) this.setFocus(this.focus + 1);
         break;
       case 'confirm':
         this.activate();

@@ -150,6 +150,8 @@ Nothing in the renderer needs to change; the road, walls, terrain, props and min
 | `npm run report [cc] [seed] [track]` | headless CPU race on each track with timings |
 | `npm run plot` | top-down SVG of every layout in `plots/` |
 
+URL flags for development: `?viewports=2` (split screen following you and a CPU), `?autopilot` (a CPU drives your kart, which is handy for demos and for watching a whole race). `node e2e/peek.mjs <trackIndex>` runs an autopiloted race in a headless browser and saves screenshots plus the results screen.
+
 ## Known limitations
 
 These are honest gaps, not polish items:

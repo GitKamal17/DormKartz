@@ -137,3 +137,10 @@ table.results tr.me td { background: rgba(255,210,58,.16); color: var(--accent);
   .hud-place .num { font-size: 64px; }
   .hud-minimap canvas { width: 130px; height: 130px; }
 }
+
+/* Result-style overlays: table first, buttons in a row underneath. */
+.screen-results .menu-extra, .screen-standings .menu-extra { order: -1; }
+.screen-results .menu-list, .screen-standings .menu-list, .screen-podium .menu-list { flex-direction: row; flex-wrap: wrap; }
+.screen-results .menu-item, .screen-standings .menu-item, .screen-podium .menu-item { flex: 1 1 160px; justify-content: center; font-size: 17px; padding: 11px 14px; }
+.screen-results .menu-item.focus, .screen-standings .menu-item.focus, .screen-podium .menu-item.focus { transform: translateY(-2px); }
+table.results td { padding: 5px 10px; }

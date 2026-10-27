@@ -24,6 +24,8 @@ import { Preview } from './ui/preview';
 const PLAYER_ID = 0;
 const params = new URLSearchParams(location.search);
 const DEBUG_VIEWPORTS = Math.max(1, Math.min(4, Number(params.get('viewports') ?? 1) || 1));
+/** Dev/demo flag: a CPU drives your kart. */
+const AUTOPILOT = params.has('autopilot');
 
 function hexColor(c: number): string {
   return '#' + c.toString(16).padStart(6, '0');
@@ -191,7 +193,13 @@ export class App {
   }
 
   private buildSlots(rng: SeededRandom): PlayerSlot[] {
-    const player: PlayerSlot = { id: PLAYER_ID, kind: 'local', characterId: this.characterId, input: new LocalInput(), localIndex: 0 };
+    const player: PlayerSlot = {
+      id: PLAYER_ID,
+      kind: 'local',
+      characterId: this.characterId,
+      input: AUTOPILOT ? new AIInput(0.95, 'autopilot') : new LocalInput(),
+      localIndex: 0,
+    };
     if (this.mode === 'tt') return [player];
     const base = SPEED_CLASS[this.cc].cpuSkill;
     const makeCpu = (id: PlayerId, characterId: string, rank: number): PlayerSlot => ({
@@ -512,6 +520,7 @@ export class App {
       title: this.mode === 'tt' ? 'Time Trial' : 'Results',
       subtitle,
       className: 'overlay',
+      horizontal: true,
       items,
       extra: (root) => {
         root.innerHTML = this.mode === 'tt' ? `<p class="laps">${laps}</p>` : `<table class="results">${rows}</table><p class="laps">${laps}</p>`;
@@ -542,6 +551,7 @@ export class App {
         ];
     this.menu.show({
       id: 'standings',
+      horizontal: true,
       title: `${CUPS.find((c) => c.id === gp.cupId)!.name} — after race ${gp.raceIndex}/${gp.trackIds.length}`,
       className: 'overlay',
       items,
@@ -560,6 +570,7 @@ export class App {
     this.audio.stopMusic();
     this.menu.show({
       id: 'podium',
+      horizontal: true,
       title: myPlace === 1 ? 'Champion!' : `You placed ${myPlace}${ordinalSuffix(myPlace)}`,
       subtitle: `${CUPS.find((c) => c.id === gp.cupId)!.name} · ${gp.cc}cc · ${st[0].points} pts for the winner`,
       className: 'overlay podium',
