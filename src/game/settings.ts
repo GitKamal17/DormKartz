@@ -5,9 +5,11 @@ export interface Settings {
   music: number;
   sfx: number;
   showFps: boolean;
+  /** Two-player split: false = top/bottom, true = side by side. */
+  splitSideBySide: boolean;
 }
 
-const DEFAULTS: Settings = { master: 0.8, music: 0.55, sfx: 0.8, showFps: false };
+const DEFAULTS: Settings = { master: 0.8, music: 0.55, sfx: 0.8, showFps: false, splitSideBySide: false };
 
 export function loadSettings(): Settings {
   return { ...DEFAULTS, ...load<Partial<Settings>>('settings', {}) };

@@ -60,7 +60,7 @@ export class Minimap {
     return [this.size / 2 - (x - this.ox) * this.scale, this.size / 2 - (z - this.oz) * this.scale];
   }
 
-  draw(state: RaceState, focus: PlayerId, ghost: KartState | null): void {
+  draw(state: RaceState, focus: PlayerId, ghost: KartState | null, humans?: ReadonlyMap<PlayerId, string>): void {
     const c = this.ctx;
     c.clearRect(0, 0, this.size, this.size);
     c.drawImage(this.base, 0, 0);
@@ -83,11 +83,12 @@ export class Minimap {
     for (const k of ks) {
       const [x, y] = this.map(k.x, k.z);
       const me = k.id === focus;
+      const human = humans?.get(k.id);
       c.fillStyle = '#' + getCharacter(k.characterId).color.toString(16).padStart(6, '0');
-      c.strokeStyle = me ? '#ffffff' : '#000000';
-      c.lineWidth = me ? 3 : 1.5;
+      c.strokeStyle = me ? '#ffffff' : human ?? '#000000';
+      c.lineWidth = me ? 3 : human ? 3 : 1.5;
       c.beginPath();
-      c.arc(x, y, me ? 6.5 : 4.5, 0, Math.PI * 2);
+      c.arc(x, y, me ? 6.5 : human ? 5.5 : 4.5, 0, Math.PI * 2);
       c.fill();
       c.stroke();
     }
@@ -116,15 +117,22 @@ export class Hud {
   private lastSplitCount = -1;
   private lastIcon = '';
   private readonly ghostLabel: HTMLDivElement;
+  private readonly humans?: ReadonlyMap<PlayerId, string>;
 
   constructor(
     parent: HTMLElement,
     track: Track,
     private readonly follow: PlayerId,
     private readonly laps: number,
-    compact: boolean,
+    opts: { tag?: { label: string; color: string; name: string } | null; humans?: ReadonlyMap<PlayerId, string> } = {},
   ) {
-    this.root = el('div', 'hud' + (compact ? ' compact' : ''), parent);
+    this.humans = opts.humans;
+    this.root = el('div', 'hud' + (opts.tag ? ' player' : ''), parent);
+    if (opts.tag) {
+      this.root.style.setProperty('--pc', opts.tag.color);
+      const tag = el('div', 'hud-tag', this.root);
+      tag.innerHTML = `<b>${opts.tag.label}</b> ${opts.tag.name}`;
+    }
     const tl = el('div', 'hud-tl', this.root);
     this.itemBox = el('div', 'item-box', tl);
     this.itemIcon = el('div', 'item-icon', this.itemBox);
@@ -134,7 +142,7 @@ export class Hud {
     this.time = el('div', 'hud-time', tr);
     this.splits = el('div', 'hud-splits', tr);
     this.ghostLabel = el('div', 'hud-ghost', tr);
-    this.minimap = new Minimap(track, compact ? 140 : 190);
+    this.minimap = new Minimap(track, 190);
     const mm = el('div', 'hud-minimap', this.root);
     mm.appendChild(this.minimap.canvas);
     this.place = el('div', 'hud-place', this.root);
@@ -149,6 +157,17 @@ export class Hud {
 
   setRect(r: { x: number; y: number; w: number; h: number }): void {
     Object.assign(this.root.style, { left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%' });
+    this.rect = r;
+    this.rescale();
+  }
+
+  private rect = { x: 0, y: 0, w: 1, h: 1 };
+
+  /** Shrinks HUD elements to fit smaller split-screen viewports. */
+  rescale(): void {
+    const w = this.rect.w * window.innerWidth, h = this.rect.h * window.innerHeight;
+    const s = Math.max(0.5, Math.min(1, w / 1100, h / 640));
+    this.root.style.setProperty('--s', s.toFixed(3));
   }
 
   showCenter(text: string, ms: number, cls = ''): void {
@@ -223,7 +242,51 @@ export class Hud {
     this.wrong.classList.toggle('show', k.wrongWay && !k.finished);
     const speed = Math.hypot(k.vx, k.vz);
     this.speedo.textContent = `${Math.round(speed * 3.6)} km/h`;
-    this.minimap.draw(state, this.follow, ghost);
+    this.minimap.draw(state, this.follow, ghost, this.humans);
+  }
+
+  destroy(): void {
+    this.root.remove();
+  }
+}
+
+/** Fills the spare quarter of a 3-player split: big live map and standings. */
+export class MapPanel {
+  readonly root: HTMLDivElement;
+  private readonly minimap: Minimap;
+  private readonly list: HTMLDivElement;
+  private last = '';
+
+  constructor(
+    parent: HTMLElement,
+    track: Track,
+    rect: { x: number; y: number; w: number; h: number },
+    private readonly humans: ReadonlyMap<PlayerId, string>,
+  ) {
+    this.root = el('div', 'map-panel', parent);
+    Object.assign(this.root.style, { left: rect.x * 100 + '%', top: rect.y * 100 + '%', width: rect.w * 100 + '%', height: rect.h * 100 + '%' });
+    const size = Math.round(Math.min(rect.w * window.innerWidth * 0.55, rect.h * window.innerHeight * 0.85));
+    this.minimap = new Minimap(track, Math.max(120, size));
+    this.root.appendChild(this.minimap.canvas);
+    this.list = el('div', 'map-standings', this.root);
+  }
+
+  update(state: RaceState): void {
+    this.minimap.draw(state, -1, null, this.humans);
+    const order = [...state.karts].sort((a, b) => a.place - b.place);
+    const key = order.map((k) => k.id).join(',');
+    if (key === this.last) return;
+    this.last = key;
+    let n = 0;
+    const tags = new Map([...this.humans.keys()].map((id) => [id, `P${++n}`]));
+    this.list.innerHTML = order
+      .map((k) => {
+        const c = getCharacter(k.characterId);
+        const color = this.humans.get(k.id);
+        const tag = color ? `<b style="background:${color}">${tags.get(k.id)}</b>` : '';
+        return `<div class="${color ? 'human' : ''}"><span class="pl">${k.place}</span>${tag}<span class="dot" style="background:#${c.color.toString(16).padStart(6, '0')}"></span>${c.name}</div>`;
+      })
+      .join('');
   }
 
   destroy(): void {

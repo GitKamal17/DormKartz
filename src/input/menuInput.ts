@@ -1,6 +1,6 @@
 // Menu navigation from keyboard and gamepad, as discrete actions with key repeat.
 
-import { firstPad, PAD, pressed, axis } from './gamepad';
+import { PAD, pressed, axis } from './gamepad';
 
 export type MenuAction = 'up' | 'down' | 'left' | 'right' | 'confirm' | 'back' | 'pause';
 
@@ -21,8 +21,8 @@ const KEY_ACTIONS: Record<string, MenuAction> = {
 
 export class MenuInput {
   private listeners: ((a: MenuAction, source: 'key' | 'pad') => void)[] = [];
-  private padHeld = new Map<MenuAction, number>();
-  private padWasConnected = false;
+  private padHeld = new Map<string, number>();
+  private padsSeen = new Set<number>();
 
   constructor(target: Window = window) {
     target.addEventListener('keydown', (e) => {
@@ -44,36 +44,44 @@ export class MenuInput {
     for (const l of [...this.listeners]) l(a, source);
   }
 
-  /** Call once per frame to turn gamepad state into actions. */
+  /** Call once per frame to turn gamepad state into actions. Every connected pad can drive menus. */
   pollGamepad(now: number): void {
-    const p = firstPad();
-    if (!p) {
-      this.padWasConnected = false;
-      return;
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    const seen = new Set<number>();
+    for (const p of navigator.getGamepads()) {
+      if (!p || !p.connected) continue;
+      seen.add(p.index);
+      const state: [MenuAction, boolean][] = [
+        ['up', pressed(p, PAD.UP) || axis(p, 1) < -0.6],
+        ['down', pressed(p, PAD.DOWN) || axis(p, 1) > 0.6],
+        ['left', pressed(p, PAD.LEFT) || axis(p, 0) < -0.6],
+        ['right', pressed(p, PAD.RIGHT) || axis(p, 0) > 0.6],
+        ['confirm', pressed(p, PAD.A)],
+        ['back', pressed(p, PAD.B)],
+        ['pause', pressed(p, PAD.START)],
+      ];
+      // Ignore buttons already held when a pad is first seen.
+      const fresh = !this.padsSeen.has(p.index);
+      this.padsSeen.add(p.index);
+      for (const [a, down] of state) {
+        const key = `${p.index}:${a}`;
+        const since = this.padHeld.get(key);
+        if (down) {
+          if (since === undefined) {
+            this.padHeld.set(key, now);
+            if (!fresh) this.emit(a, 'pad');
+          } else if (a !== 'confirm' && a !== 'back' && a !== 'pause' && now - since > 420) {
+            this.padHeld.set(key, now - 300);
+            this.emit(a, 'pad');
+          }
+        } else this.padHeld.delete(key);
+      }
     }
-    const state: [MenuAction, boolean][] = [
-      ['up', pressed(p, PAD.UP) || axis(p, 1) < -0.6],
-      ['down', pressed(p, PAD.DOWN) || axis(p, 1) > 0.6],
-      ['left', pressed(p, PAD.LEFT) || axis(p, 0) < -0.6],
-      ['right', pressed(p, PAD.RIGHT) || axis(p, 0) > 0.6],
-      ['confirm', pressed(p, PAD.A)],
-      ['back', pressed(p, PAD.B)],
-      ['pause', pressed(p, PAD.START)],
-    ];
-    const fresh = !this.padWasConnected;
-    this.padWasConnected = true;
-    for (const [a, down] of state) {
-      const since = this.padHeld.get(a);
-      if (down) {
-        if (since === undefined) {
-          this.padHeld.set(a, now);
-          // Ignore buttons already held when the pad is first seen.
-          if (!fresh) this.emit(a, 'pad');
-        } else if (a !== 'confirm' && a !== 'back' && a !== 'pause' && now - since > 420) {
-          this.padHeld.set(a, now - 300);
-          this.emit(a, 'pad');
-        }
-      } else this.padHeld.delete(a);
-    }
+    for (const i of [...this.padsSeen]) if (!seen.has(i)) this.padsSeen.delete(i);
+  }
+
+  /** Treat everything currently held as already handled (used when screens switch). */
+  swallowHeld(): void {
+    for (const i of [...this.padsSeen]) this.padsSeen.delete(i);
   }
 }

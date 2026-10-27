@@ -25,7 +25,7 @@ export class Preview {
     this.scene.add(sun);
   }
 
-  show(ids: string[], mode: 'single' | 'podium' = 'single'): void {
+  show(ids: string[], mode: 'single' | 'podium' | 'lineup' = 'single'): void {
     for (const m of this.models) {
       m.root.removeFromParent();
       m.dispose();
@@ -33,7 +33,19 @@ export class Preview {
     this.models = [];
     this.podium?.removeFromParent();
     this.podium = null;
-    if (mode === 'single') {
+    if (mode === 'lineup') {
+      const n = Math.max(1, ids.length);
+      const gap = 3.1;
+      ids.forEach((id, i) => {
+        const m = buildKart(id);
+        m.root.position.set((i - (n - 1) / 2) * gap, 0, 0);
+        this.scene.add(m.root);
+        this.models.push(m);
+      });
+      const dist = 5.5 + n * 2.4;
+      this.camera.position.set(0, 2.2 + n * 0.5, dist);
+      this.camera.lookAt(0, 0.9, 0);
+    } else if (mode === 'single') {
       const m = buildKart(ids[0]);
       this.scene.add(m.root);
       this.models.push(m);

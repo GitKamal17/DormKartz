@@ -53,6 +53,9 @@ class EngineVoice {
     this.squeal.start();
   }
 
+  /** Scales the voice down when several local players' engines play at once. */
+  mix = 1;
+
   update(ctx: AudioContext, k: KartState, throttle: number, active: boolean): void {
     const t = ctx.currentTime;
     const speed = Math.hypot(k.vx, k.vz);
@@ -62,9 +65,9 @@ class EngineVoice {
     this.osc2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
     this.filter.frequency.setTargetAtTime(400 + speed * 40 + throttle * 600, t, 0.08);
     const vol = active && k.fallTicks === 0 ? 0.05 + throttle * 0.07 + Math.min(0.06, speed * 0.002) : 0;
-    this.gain.gain.setTargetAtTime(vol, t, 0.08);
+    this.gain.gain.setTargetAtTime(vol * this.mix, t, 0.08);
     const sq = active && k.drift !== 0 && k.grounded ? 0.05 + k.driftTier * 0.02 : 0;
-    this.squealGain.gain.setTargetAtTime(sq, t, 0.04);
+    this.squealGain.gain.setTargetAtTime(sq * this.mix, t, 0.04);
   }
 
   stop(): void {
@@ -276,7 +279,11 @@ export class AudioEngine {
   startEngines(ids: PlayerId[]): void {
     this.stopEngines();
     if (!this.ctx) return;
-    for (const id of ids) this.engines.set(id, new EngineVoice(this.ctx, this.sfx, this.noise));
+    for (const id of ids) {
+      const v = new EngineVoice(this.ctx, this.sfx, this.noise);
+      v.mix = 1 / Math.sqrt(ids.length);
+      this.engines.set(id, v);
+    }
   }
 
   stopEngines(): void {
@@ -338,6 +345,10 @@ export class AudioEngine {
 
   menuBack(): void {
     this.blip(440, 0.08, 'square', 0.04, 300);
+  }
+
+  menuDeny(): void {
+    this.blip(160, 0.14, 'square', 0.05, 120);
   }
 
   /** Plays sounds for events that matter to the listening players. */

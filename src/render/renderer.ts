@@ -2,6 +2,7 @@
 // number of viewports, each with its own chase camera following one kart.
 
 import * as THREE from 'three';
+import { viewportRects } from '../game/party';
 import type { RaceSession } from '../game/session';
 import { PREV_STRIDE } from '../game/session';
 import { PHYS } from '../sim/config';
@@ -246,7 +247,7 @@ export class GameRenderer {
   }
 
   /** Builds the world for a race. `follow` lists the kart each viewport tracks. */
-  load(session: RaceSession, follow: PlayerId[]): void {
+  load(session: RaceSession, follow: PlayerId[], sideBySide = false): void {
     this.unload();
     this.session = session;
     const track = session.track;
@@ -260,16 +261,12 @@ export class GameRenderer {
     for (const k of session.state.karts) this.karts.set(k.id, new KartVisual(this.scene, k.characterId, this.shadowMat, this.shadowGeo, false));
     if (session.ghost) this.ghost = new KartVisual(this.scene, session.ghost.data.characterId, this.shadowMat, this.shadowGeo, true);
     this.particles.clear();
-    this.setViewports(follow);
+    this.setViewports(follow, sideBySide);
   }
 
-  setViewports(follow: PlayerId[]): void {
-    const n = follow.length;
-    this.viewports = follow.map((id, i) => ({
-      follow: id,
-      chase: new ChaseCamera(),
-      rect: n === 1 ? { x: 0, y: 0, w: 1, h: 1 } : n === 2 ? { x: 0, y: i * 0.5, w: 1, h: 0.5 } : { x: (i % 2) * 0.5, y: Math.floor(i / 2) * 0.5, w: 0.5, h: 0.5 },
-    }));
+  setViewports(follow: PlayerId[], sideBySide = false): void {
+    const rects = viewportRects(follow.length, sideBySide);
+    this.viewports = follow.map((id, i) => ({ follow: id, chase: new ChaseCamera(), rect: rects[i] }));
     this.resize();
   }
 

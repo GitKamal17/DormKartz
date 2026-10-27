@@ -1,6 +1,6 @@
 # DormKartz
 
-A 3D arcade kart racer that runs in a desktop browser. You race 7 CPU drivers across 8 original tracks in 2 cups. It has drifting with mini-turbos, items, a Grand Prix with points, single races and a time trial with ghosts.
+A 3D arcade kart racer that runs in a desktop browser. Race solo against 7 CPU drivers, or 2 to 4 players in split screen on one computer, across 8 original tracks in 2 cups. It has drifting with mini-turbos, items, a Grand Prix with points, single races and a time trial with ghosts.
 
 Everything is original: the characters, tracks, items, art (built in code from primitives) and sound (synthesized with Web Audio). No asset files are downloaded.
 
@@ -22,7 +22,7 @@ npx vite preview --host --port 8080
 
 Use a recent Chrome, Edge or Firefox. A real GPU is strongly recommended (see [Known limitations](#known-limitations)).
 
-## Controls
+## Controls (solo)
 
 | Action | Keyboard | Gamepad (standard mapping) |
 |---|---|---|
@@ -42,10 +42,79 @@ Driving tips:
 - **Tricks:** tap drift as you leave a ramp. You get a small boost on landing.
 - **Off-road** slows you down unless you're boosting. Every track has a shortcut that's worth taking with a boost.
 
+## Party Race: 2 to 4 players, split screen
+
+From the main menu pick **Party Race**. Each player joins by pressing a button on their own device:
+
+| Device | Press to join | In the lobby |
+|---|---|---|
+| Keyboard, left side | **Space** | W A S D move · Space pick · Q back |
+| Keyboard, arrow side | **Enter** | Arrows move · Enter pick · Backspace back |
+| Any gamepad | **A** | Stick/D-pad move · A pick · B back |
+
+Everyone moves their own cursor and locks in a racer at the same time (two players can't pick the same one). When everyone is ready, any player presses pick again. Then choose **VS Race** or **Grand Prix**, whether to fill the grid with **CPU racers**, the speed class and the track. Anyone can drive those menus.
+
+One keyboard fits **two** players. Players 3 and 4 need gamepads; any mix works, e.g. two on the keyboard plus two gamepads, or four gamepads.
+
+### Each player's controls in a party race
+
+**Player on the left side of the keyboard:**
+
+| Action | Key |
+|---|---|
+| Steer | A / D |
+| Accelerate | W |
+| Brake / reverse | S |
+| Drift / hop / trick | Space |
+| Use item | Left Shift or E |
+| Look back | Q |
+| Pause (for everyone) | Esc |
+
+**Player on the arrow side of the keyboard:**
+
+| Action | Key | Numpad alternative |
+|---|---|---|
+| Steer | ← / → | 4 / 6 |
+| Accelerate | ↑ | 8 |
+| Brake / reverse | ↓ | 5 or 2 |
+| Drift / hop / trick | Right Shift | 0 |
+| Use item | / or Right Ctrl | . (decimal) |
+| Look back | . (period) | 1 |
+| Pause (for everyone) | Esc | |
+
+**Players on gamepads** (each has their own; same layout as solo):
+
+| Action | Button |
+|---|---|
+| Steer | Left stick or D-pad |
+| Accelerate | A |
+| Brake / reverse | B |
+| Drift / hop / trick | R1 or R2 |
+| Use item | L1 or L2 |
+| Look back | X |
+| Pause (for everyone) | Start |
+
+On a Mac, the arrow-side player should use **/** for items: most Mac keyboards have no Right Ctrl, and Ctrl+arrow switches desktops.
+
+If only **one** person is on the keyboard (everyone else on gamepads), they get the full solo layout: arrows *or* WASD, Space, Shift/E, Q. The lobby shows each player's exact controls under their name, and Settings → Controls lists them too.
+
+### Screen layout
+
+- **2 players:** top/bottom. Switch to side by side in Settings → "2-player split side by side".
+- **3 players:** 2×2 grid; the fourth quarter shows a live map and the standings.
+- **4 players:** 2×2 grid.
+
+Each player's screen has a colored frame and P1–P4 tag, and other players show up ringed in their color on the minimap. The race ends when every human has crossed the line; finished players are driven by a CPU until then. If a player's gamepad disconnects mid-race, the game pauses until it's back.
+
+### Shared-keyboard caveat
+
+Many keyboards, especially laptop ones, can't register more than a few keys at once ("ghosting"). Two people holding accelerate, steering and drifting at the same time can hit that limit, and a key press gets dropped. If one player's inputs seem to stick or vanish, that's the keyboard, not the game. Plugging in a gamepad for one of them fixes it. Most USB/Bluetooth controllers (Xbox, PlayStation, Switch Pro, generic) work in Chrome and Edge; press a button once after plugging in so the browser sees it.
+
 ## Modes
 
 - **Grand Prix:** 4 races in a cup. Points per place: 15/12/10/8/6/4/2/1. There's a standings screen after each race and a podium at the end. You start the first race at the back; after that the grid is reverse standings.
 - **Single Race:** any track, at 50cc, 100cc or 150cc.
+- **Party Race:** 2–4 players in split screen, as a single VS race or a Grand Prix, with or without CPUs.
 - **Time Trial:** no CPUs, and you start with a Triple Zoom. Your best lap is saved in `localStorage` as a ghost you race against next time.
 
 ## Tracks
@@ -82,11 +151,11 @@ src/sim/        Pure simulation. No Three.js, no DOM, no clock, no Math.random.
   config.ts       every driving-feel constant (see docs/TUNING.md)
   track/          track format (types.ts), loop authoring helper (path.ts), geometry builder (build.ts)
   tracks/         one data file per track
-src/input/      InputSource implementations: keyboard+gamepad (LocalInput), AIInput
-src/game/       RaceSession (slots, inputs, ticking), fixed-step loop, ghosts, Grand Prix
+src/input/      InputSource implementations: keyboard+gamepad (LocalInput), AIInput; per-device lobby input
+src/game/       RaceSession (slots, inputs, ticking), fixed-step loop, ghosts, Grand Prix, party setup
 src/render/     Three.js: world mesh from track data, kart models, effects, N viewports
 src/audio/      Web Audio engine sounds, SFX and procedural music
-src/ui/         HUD, minimap, menus
+src/ui/         HUD, minimap, menus, party lobby
 tests/          Vitest: sim unit tests + full CPU races on every track
 e2e/            Playwright smoke test
 scripts/        dev tools: track layout plotter, headless race report
@@ -99,14 +168,16 @@ The game is split so that later features are additions, not rewrites:
 1. **The simulation is pure.** `src/sim` never imports Three.js or the DOM. `step(state, inputs)` advances exactly one 1/60 s tick. All randomness comes from a seeded RNG stored in the state, and the whole `RaceState` is plain JSON (a test checks that it round-trips and keeps simulating identically). The same code could run on a Node server.
 2. **Every kart is driven by a `FrameInput`.** `{ steer, throttle, brake, drift, useItem, lookBack }` comes from an `InputSource`: `LocalInput` (keyboard/gamepad), `AIInput`, or later a `NetworkInput`. The sim cannot tell them apart. The only per-kart flag it knows about is `catchUp` (mild rubber-banding), which the session sets for CPU slots.
 3. **Players are slots.** A `RaceSession` holds `PlayerSlot { id, kind: 'local' | 'cpu', input, characterId, localIndex }`. Nothing assumes there's one human or that the human is kart 0 in the sim.
-4. **Rendering only reads.** It interpolates between the previous and current tick, and draws a list of viewports, each with its own chase camera and HUD. `?viewports=2` splits the screen today, following you and a CPU, to prove it works.
+4. **Rendering only reads.** It interpolates between the previous and current tick, and draws a list of viewports, each with its own chase camera and HUD. Party Race uses this for 2–4 player split screen.
 
-### Adding local split-screen
+### How split screen is built
 
-- Create two `LocalInput`s: one with `{ keys: DEFAULT_KEYS, pad: null }`, the other with `{ keys: <second key set>, pad: 0 }` (or pads 0 and 1).
-- Create two `local` slots with `localIndex` 0 and 1.
-- Pass both ids to `renderer.load(session, [id0, id1])` and create one `Hud` per viewport (`App.startRace` already does this for the debug flag).
-- What's missing is the menu flow for picking two characters and joining with a second pad.
+Party mode uses exactly the pieces above, with no special cases in the simulation:
+
+- `src/game/party.ts` maps each joined device to a `LocalInput` (keyboard half or gamepad index) and lays out the viewports. It's pure and unit-tested.
+- `src/input/devices.ts` turns each keyboard half and each gamepad into a separate menu device, so the lobby can have one cursor per player.
+- Each human is a `local` slot with its own `LocalInput`; the renderer draws one viewport per human, each with its own chase camera and HUD.
+- Kart models are merged into a few draw calls each, so drawing the scene four times stays affordable.
 
 ### Adding online / Android
 
@@ -146,7 +217,7 @@ Nothing in the renderer needs to change; the road, walls, terrain, props and min
 | `npm run build` | typecheck + production build to `dist/` |
 | `npm run typecheck` | TypeScript only |
 | `npm test` | Vitest: sim unit tests, determinism, ghost replay, every-track CPU races |
-| `npm run test:e2e` | build, then Playwright smoke test (menus → race on each track, split screen, pause, time trial). Needs `npx playwright install chromium` the first time. Screenshots go to `e2e/screenshots/` |
+| `npm run test:e2e` | build, then Playwright smoke test: menus → race on each track, pause, time trial, and party races with 2, 3 and 4 players (gamepads are simulated). Needs `npx playwright install chromium` the first time. Screenshots go to `e2e/screenshots/` |
 | `npm run report [cc] [seed] [track]` | headless CPU race on each track with timings |
 | `npm run plot` | top-down SVG of every layout in `plots/` |
 
@@ -157,7 +228,8 @@ URL flags for development: `?viewports=2` (split screen following you and a CPU)
 These are honest gaps, not polish items:
 
 - **Driving feel has not been tuned by humans.** The constants are tested for consistency (tiers, boosts, CPU races complete), not for fun. Expect to tweak `src/sim/config.ts` after your first session; `docs/TUNING.md` explains each knob.
+- **Split screen multiplies the rendering work.** Four players means drawing the scene four times. It's been checked for correctness, not speed on a real laptop; if 3–4 players stutters, turn on the FPS counter and see the note below.
 - **Performance on real hardware is unmeasured.** It was only run in a headless browser with a software GPU, which is much slower than any real graphics card. The scene is built to be cheap (instanced props, merged track meshes, no real-time shadows, pooled particles), but check the FPS counter in Settings on the actual laptop. If it struggles, lower the pixel ratio in `src/render/renderer.ts`.
 - **CPU drivers are competent but simple.** They follow a precomputed racing line, drift on long corners, dodge hazards and use items with basic rules. They don't plan overtakes.
 - **Music is procedural and basic:** generated chord loops per track, not composed songs.
-- **No touch controls, online play, battle mode or track editor yet.** That's by design for Phase 1.
+- **No touch controls, online play, battle mode or track editor yet.**

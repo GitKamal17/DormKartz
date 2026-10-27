@@ -46,7 +46,35 @@ export const DEFAULT_KEYS: KeyBindings = {
   lookBack: ['KeyQ'],
 };
 
-const GAME_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space']);
+/** Left half of a shared keyboard. Same keys as solo play, minus the arrows. */
+export const KEYS_LEFT: KeyBindings = {
+  left: ['KeyA'],
+  right: ['KeyD'],
+  throttle: ['KeyW'],
+  brake: ['KeyS'],
+  drift: ['Space'],
+  item: ['ShiftLeft', 'KeyE'],
+  lookBack: ['KeyQ'],
+};
+
+/**
+ * Right half of a shared keyboard: arrows plus the keys around them (numpad too).
+ * "/" comes first for items because Macs have no Right Ctrl and Ctrl+arrows
+ * switches desktops there.
+ */
+export const KEYS_RIGHT: KeyBindings = {
+  left: ['ArrowLeft', 'Numpad4'],
+  right: ['ArrowRight', 'Numpad6'],
+  throttle: ['ArrowUp', 'Numpad8'],
+  brake: ['ArrowDown', 'Numpad5', 'Numpad2'],
+  drift: ['ShiftRight', 'Numpad0'],
+  item: ['Slash', 'ControlRight', 'NumpadDecimal'],
+  lookBack: ['Period', 'Numpad1'],
+};
+
+// Keys whose browser default must be blocked: scrolling (arrows, Space),
+// Firefox quick find ("/" and "'"), and history navigation (Backspace).
+const GAME_KEYS = new Set<string>(['Backspace', 'Quote', ...[DEFAULT_KEYS, KEYS_LEFT, KEYS_RIGHT].flatMap((k) => Object.values(k).flat())]);
 
 export function anyHeld(codes: string[]): boolean {
   for (const c of codes) if (held.has(c)) return true;

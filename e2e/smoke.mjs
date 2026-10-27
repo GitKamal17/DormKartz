@@ -54,7 +54,7 @@ async function enterRace(page, i, mode = 'single') {
     await waitScreen(page, 'cc');
     await press(page, 'Enter'); // 100cc
   } else {
-    await press(page, 'ArrowDown', 2);
+    await press(page, 'ArrowDown', 3); // Time Trial (after Grand Prix, Single Race, Party Race)
     await press(page, 'Enter');
   }
   await waitScreen(page, 'character');
@@ -103,7 +103,7 @@ function collect(page) {
 
 // --- Every track -----------------------------------------------------------------
 for (let i = 0; i < TRACKS.length; i++) {
-  if (only && (only === 'extras' || !TRACKS[i].includes(only))) continue;
+  if (only && (only === 'extras' || only === 'party' || !TRACKS[i].includes(only))) continue;
   const t0 = Date.now();
   const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
   const errors = collect(page);
@@ -181,6 +181,132 @@ if (!only || only === 'extras') {
     check(errors.length === 0, `pause/tt: console errors: ${errors.slice(0, 5).join(' | ')}`);
     await page.close();
   }
+}
+
+// --- Party (local multiplayer) ---------------------------------------------------
+// Gamepads are faked by overriding navigator.getGamepads(); the test presses
+// their buttons through window.__padSet(index, button, pressed).
+const FAKE_PADS = () => {
+  window.__pads = [];
+  const snapshot = (p) => ({
+    index: p.index,
+    id: `Fake gamepad ${p.index + 1}`,
+    connected: true,
+    mapping: 'standard',
+    timestamp: performance.now(),
+    axes: p.axes.slice(),
+    buttons: p.buttons.map((b) => ({ pressed: b, touched: b, value: b ? 1 : 0 })),
+  });
+  Object.defineProperty(navigator, 'getGamepads', {
+    configurable: true,
+    value: () => {
+      const out = [null, null, null, null];
+      for (const p of window.__pads) out[p.index] = snapshot(p);
+      return out;
+    },
+  });
+  window.__padSet = (i, b, v) => {
+    let p = window.__pads.find((x) => x.index === i);
+    if (!p) {
+      p = { index: i, axes: [0, 0, 0, 0], buttons: Array(17).fill(false) };
+      window.__pads.push(p);
+    }
+    p.buttons[b] = v;
+  };
+};
+
+async function padTap(page, pad, button) {
+  await page.evaluate(([i, b]) => window.__padSet(i, b, true), [pad, button]);
+  await page.waitForTimeout(450);
+  await page.evaluate(([i, b]) => window.__padSet(i, b, false), [pad, button]);
+  await page.waitForTimeout(350);
+}
+
+const lobby = (page) => page.evaluate(() => window.dormkartz.status().lobby ?? []);
+
+/**
+ * Runs a party race. devices: which devices join, in order ('L' = keyboard left,
+ * 'R' = keyboard arrows, 0/1 = gamepad index).
+ */
+async function partyRace(name, devices, { cpus = true, track = 0, shot }) {
+  console.log(`party: ${name}`);
+  const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+  await page.addInitScript(FAKE_PADS);
+  const errors = collect(page);
+  try {
+    await open(page);
+    await press(page, 'Enter');
+    await waitScreen(page, 'main');
+    await press(page, 'ArrowDown', 2); // Party Race
+    await press(page, 'Enter');
+    await waitScreen(page, 'lobby');
+    const confirm = async (d) => (d === 'L' ? press(page, 'Space') : d === 'R' ? press(page, 'Enter') : padTap(page, d, 0));
+    for (const d of devices) await confirm(d); // join
+    check((await lobby(page)).length === devices.length, `${name}: expected ${devices.length} players to join, got ${(await lobby(page)).length}`);
+    for (const d of devices) await confirm(d); // lock in racer
+    const seats = await lobby(page);
+    check(seats.every((x) => x.ready), `${name}: not everyone is ready: ${JSON.stringify(seats)}`);
+    check(new Set(seats.map((x) => x.characterId)).size === seats.length, `${name}: two players got the same racer`);
+    await page.screenshot({ path: `${OUT}/party-${shot}-lobby.png` });
+    await confirm(devices[0]); // everyone ready: continue
+    await waitScreen(page, 'party-setup');
+    if (!cpus) {
+      await press(page, 'ArrowDown', 2);
+      await press(page, 'Enter'); // CPU racers: off
+      await press(page, 'ArrowUp', 2);
+    }
+    await press(page, 'Enter'); // VS Race
+    await waitScreen(page, 'cc');
+    await press(page, 'Enter'); // 100cc
+    await waitScreen(page, 'track');
+    await press(page, 'ArrowDown', Math.floor(track / 2));
+    await press(page, 'ArrowRight', track % 2);
+    await press(page, 'Enter');
+    await page.waitForFunction(() => window.dormkartz.status().racing, null, { timeout: 30000 });
+    const st = await status(page);
+    check(st.viewports === devices.length, `${name}: expected ${devices.length} viewports, got ${st.viewports}`);
+    check(st.players.length === devices.length, `${name}: expected ${devices.length} human karts`);
+    check(st.karts === (cpus ? 8 : devices.length), `${name}: expected ${cpus ? 8 : devices.length} karts, got ${st.karts}`);
+    check((await page.locator('.hud.player').count()) === devices.length, `${name}: expected one tagged HUD per player`);
+    await page.waitForFunction(() => window.dormkartz.status().phase === 'racing', null, { timeout: 180000, polling: 250 });
+    // Everyone holds accelerate on their own device.
+    const hold = async (down) => {
+      for (const d of devices) {
+        if (d === 'L') await (down ? page.keyboard.down('KeyW') : page.keyboard.up('KeyW'));
+        else if (d === 'R') await (down ? page.keyboard.down('ArrowUp') : page.keyboard.up('ArrowUp'));
+        else await page.evaluate(([i, v]) => window.__padSet(i, 0, v), [d, down]);
+      }
+    };
+    await hold(true);
+    const maxSpeed = devices.map(() => 0);
+    const end = (await status(page)).tick + 150;
+    while ((await status(page)).tick < end) {
+      const ps = (await status(page)).players;
+      ps.forEach((p, i) => (maxSpeed[i] = Math.max(maxSpeed[i], p.speed)));
+      await page.waitForTimeout(250);
+    }
+    await page.screenshot({ path: `${OUT}/party-${shot}-race.png` });
+    console.log(`  draw calls per viewport: ${(await status(page)).draws}`);
+    await hold(false);
+    maxSpeed.forEach((v, i) => check(v > 5, `${name}: player ${i + 1} (${devices[i]}) never got moving (max ${v.toFixed(1)})`));
+    // Any player can pause; Esc on the keyboard here.
+    await press(page, 'Escape');
+    await waitScreen(page, 'pause');
+    await press(page, 'ArrowDown', 2);
+    await press(page, 'Enter');
+    await waitScreen(page, 'main');
+  } catch (e) {
+    check(false, `${name}: ${e.message}`);
+    await page.screenshot({ path: `${OUT}/party-${shot}-error.png` }).catch(() => {});
+  }
+  check(errors.length === 0, `${name}: console errors: ${errors.slice(0, 5).join(' | ')}`);
+  await page.close();
+}
+
+if (!only || only === 'party') {
+  await partyRace('2 players, one keyboard, no CPUs', ['L', 'R'], { cpus: false, track: 5, shot: '2p' });
+  await partyRace('3 players', ['L', 'R', 0], { track: 3, shot: '3p' });
+  await partyRace('4 players: keyboard x2 + 2 gamepads', ['L', 'R', 0, 1], { track: 6, shot: '4p' });
 }
 
 await browser.close();

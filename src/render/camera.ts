@@ -60,7 +60,7 @@ export class ChaseCamera {
       this.shake *= Math.exp(-dt * 8);
     }
     this.camera.lookAt(this.look);
-    const wantFov = boosting ? 80 : 68 + Math.min(6, speed * 0.12);
+    const wantFov = boosting ? this.baseFov + 12 : this.baseFov + Math.min(6, speed * 0.12);
     this.fov += (wantFov - this.fov) * Math.min(1, dt * 4);
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;
@@ -68,8 +68,19 @@ export class ChaseCamera {
     }
   }
 
+  /**
+   * Keeps the horizontal view about the same across viewport shapes: a wide
+   * top/bottom split gets a lower vertical FOV instead of a fisheye look.
+   */
   setAspect(a: number): void {
     this.camera.aspect = a;
+    const hfov = (100 * Math.PI) / 180;
+    const v = (2 * Math.atan(Math.tan(hfov / 2) / a) * 180) / Math.PI;
+    this.baseFov = Math.max(44, Math.min(74, v));
+    this.fov = this.baseFov;
+    this.camera.fov = this.baseFov;
     this.camera.updateProjectionMatrix();
   }
+
+  private baseFov = 68;
 }

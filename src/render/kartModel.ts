@@ -2,7 +2,24 @@
 // Models face +z; local +x is the kart's left.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { getCharacter } from '../sim/characters';
+
+/** Copy of a geometry, transformed, non-indexed, with a flat vertex color. */
+function bakeColor(src: THREE.BufferGeometry, matrix: THREE.Matrix4, color: THREE.Color): THREE.BufferGeometry {
+  const geo = (src.index ? src.toNonIndexed() : src.clone()).applyMatrix4(matrix);
+  const n = geo.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    col[i * 3] = color.r;
+    col[i * 3 + 1] = color.g;
+    col[i * 3 + 2] = color.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (!geo.attributes.uv) geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  return geo;
+}
 
 export interface KartModel {
   root: THREE.Group;
@@ -12,7 +29,7 @@ export interface KartModel {
   frontWheels: THREE.Object3D[];
   flames: THREE.Mesh[];
   wings: THREE.Object3D[];
-  /** Materials whose emissive is driven for invincibility / damage flashes. */
+  /** Materials whose emissive is driven for invincibility flashes. */
   glowMats: THREE.MeshLambertMaterial[];
   dispose(): void;
 }
@@ -191,7 +208,41 @@ export function buildKart(characterId: string, opts: { ghost?: boolean } = {}): 
     for (const x of [-0.14, 0.14]) mesh(g(new THREE.SphereGeometry(0.06, 6, 5)), dark, x, headY + 0.08, 0.38, driver);
   }
 
-  // Ghosts render translucent: patch every material in the tree.
+  // Bake: merge every static part into one vertex-colored mesh (plus one for
+  // self-lit parts) and each wheel into one mesh. ~35 draw calls per kart
+  // become ~7, which matters with four split-screen viewports.
+  const solidMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  disposables.push(solidMat, glowMat);
+  const keep = new Set<THREE.Object3D>([...wheels, ...flames, ...wings]);
+  const isKept = (o: THREE.Object3D) => {
+    for (let p: THREE.Object3D | null = o; p; p = p.parent) if (keep.has(p)) return true;
+    return false;
+  };
+  root.updateMatrixWorld(true);
+  const solid: THREE.BufferGeometry[] = [];
+  const glow: THREE.BufferGeometry[] = [];
+  const toRemove: THREE.Mesh[] = [];
+  body.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || isKept(o)) return;
+    const mat = o.material as THREE.MeshLambertMaterial | THREE.MeshBasicMaterial;
+    const geo = bakeColor(o.geometry, o.matrixWorld, mat.color);
+    (mat instanceof THREE.MeshBasicMaterial ? glow : solid).push(geo);
+    toRemove.push(o);
+  });
+  for (const o of toRemove) o.removeFromParent();
+  if (solid.length) body.add(new THREE.Mesh(g(mergeGeometries(solid)), solidMat));
+  if (glow.length) body.add(new THREE.Mesh(g(mergeGeometries(glow)), glowMat));
+  for (const geo of [...solid, ...glow]) geo.dispose();
+  const wheelGeo = g(mergeGeometries([bakeColor(tire, new THREE.Matrix4(), dark.color), bakeColor(hub, new THREE.Matrix4(), accent.color)]));
+  for (const spin of wheels) {
+    spin.clear();
+    spin.add(new THREE.Mesh(wheelGeo, solidMat));
+  }
+  glowMats.length = 0;
+  glowMats.push(solidMat);
+
+  // Ghosts render translucent.
   if (opts.ghost) {
     root.traverse((o) => {
       if (o instanceof THREE.Mesh) {

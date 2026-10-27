@@ -88,7 +88,23 @@ table.results tr.me td { background: rgba(255,210,58,.16); color: var(--accent);
 .controls h2 { margin-top: 0; }
 
 /* ---------- HUD ---------- */
-.hud { position: absolute; overflow: hidden; font-family: var(--display); text-shadow: 0 3px 0 rgba(0,0,0,.55); }
+.hud { --s: 1; position: absolute; overflow: hidden; font-family: var(--display); text-shadow: 0 3px 0 rgba(0,0,0,.55); }
+/* Every HUD block scales with its viewport (split screen) from its own corner. */
+.hud-tl { transform-origin: top left; scale: var(--s); }
+.hud-tr { transform-origin: top right; scale: var(--s); }
+.hud-minimap { transform-origin: bottom right; scale: var(--s); }
+.hud-place, .hud-speed { transform-origin: bottom left; scale: var(--s); }
+.hud-center, .hud-banner, .hud-wrong { scale: var(--s); }
+.hud.player { box-shadow: inset 0 0 0 3px var(--pc), inset 0 0 0 5px rgba(0,0,0,.6); }
+.hud-tag { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); transform-origin: top center; scale: var(--s); padding: 3px 14px 4px; border-radius: 999px; background: rgba(10,6,25,.65); font-size: 20px; white-space: nowrap; }
+.hud-tag b { color: var(--pc); }
+.map-panel { position: absolute; display: flex; align-items: center; justify-content: center; gap: 4%; background: #120c24; box-shadow: inset 0 0 0 3px #000; font-family: var(--font); }
+.map-panel canvas { background: rgba(255,255,255,.04); border-radius: 12px; }
+.map-standings { display: flex; flex-direction: column; gap: 2px; font-size: clamp(11px, 1.4vw, 16px); font-weight: 700; }
+.map-standings div { display: flex; align-items: center; gap: 6px; opacity: .75; }
+.map-standings div.human { opacity: 1; }
+.map-standings .pl { width: 1.4em; text-align: right; font-family: var(--display); }
+.map-standings b, b.ptag { display: inline-block; padding: 0 6px; border-radius: 6px; color: #111; font-size: .85em; margin-right: 6px; }
 .hud-tl { position: absolute; left: 18px; top: 16px; }
 .hud-tr { position: absolute; right: 18px; top: 14px; text-align: right; }
 .hud-lap { font-size: 26px; }
@@ -119,16 +135,6 @@ table.results tr.me td { background: rgba(255,210,58,.16); color: var(--accent);
 .hud-banner.finish { font-size: 72px; top: 30%; }
 .hud-wrong { position: absolute; left: 50%; top: 48%; transform: translateX(-50%); font-size: 50px; color: #ff4040; opacity: 0; -webkit-text-stroke: 2px #2a0000; }
 .hud-wrong.show { opacity: 1; animation: blink .5s infinite; }
-.hud.compact .hud-place .num { font-size: 60px; }
-.hud.compact .hud-place .suf { font-size: 24px; }
-.hud.compact .item-box { width: 60px; height: 60px; border-width: 3px; }
-.hud.compact .item-icon svg { width: 44px; height: 44px; }
-.hud.compact .hud-lap { font-size: 18px; } .hud.compact .hud-lap b { font-size: 26px; }
-.hud.compact .hud-time { font-size: 18px; }
-.hud.compact .hud-center { font-size: 90px; }
-.hud.compact .hud-banner { font-size: 34px; }
-.hud.compact .hud-speed { bottom: 72px; font-size: 14px; }
-.hud.compact + .hud { border-top: 3px solid #000; }
 
 @media (max-width: 720px) {
   .screen { padding: 18px 16px; }
@@ -144,3 +150,41 @@ table.results tr.me td { background: rgba(255,210,58,.16); color: var(--accent);
 .screen-results .menu-item, .screen-standings .menu-item, .screen-podium .menu-item { flex: 1 1 160px; justify-content: center; font-size: 17px; padding: 11px 14px; }
 .screen-results .menu-item.focus, .screen-standings .menu-item.focus, .screen-podium .menu-item.focus { transform: translateY(-2px); }
 table.results td { padding: 5px 10px; }
+
+/* ---------- Party lobby ---------- */
+.lobby-root { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+.screen.lobby { width: min(1180px, calc(100vw - 24px)); padding: 16px 20px; }
+.screen.lobby h1 { font-size: clamp(24px, 3.4vw, 38px); margin-bottom: 2px; }
+.screen.lobby .subtitle { margin-bottom: 10px; font-size: 14px; }
+.lobby-top { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; align-items: center; }
+.lobby-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.lobby-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 4px 20px; border-radius: 14px; background: rgba(255,255,255,.07); font-weight: 800; }
+.lobby-card .swatch { width: 30px; height: 30px; border-radius: 50%; border: 5px solid; }
+.lobby-card.locked { background: rgba(255,255,255,.16); }
+.lobby-card .badges { position: absolute; bottom: 4px; display: flex; gap: 3px; }
+.lobby-card .badges b { padding: 0 5px; border-radius: 6px; font-size: 11px; color: #111; }
+.lobby-card .badges b.ready { outline: 2px solid #fff; }
+.lobby-preview canvas { width: 100%; aspect-ratio: 16 / 6; display: block; }
+.lobby-seats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.lobby-seat { border-radius: 14px; padding: 8px 10px; background: rgba(255,255,255,.06); border: 2px solid var(--pc); min-height: 120px; font-size: 13px; }
+.lobby-seat.empty { border-style: dashed; opacity: .75; }
+.lobby-seat.ready { background: color-mix(in srgb, var(--pc) 22%, transparent); }
+.seat-head { font-weight: 800; margin-bottom: 4px; }
+.seat-head b { color: var(--pc); font-family: var(--display); font-size: 18px; margin-right: 4px; }
+.seat-char { font-size: 17px; font-weight: 800; }
+.seat-char .state { font-size: 12px; opacity: .8; margin-left: 6px; }
+.lobby-seat.ready .seat-char .state { color: var(--pc); opacity: 1; }
+.seat-menu { font-size: 11px; opacity: .7; margin: 2px 0 6px; }
+.seat-join { line-height: 1.7; }
+.seat-controls { width: 100%; border-collapse: collapse; font-size: 11.5px; line-height: 1.25; }
+.seat-controls td { padding: 1px 2px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.seat-controls td:last-child { text-align: right; font-weight: 700; }
+kbd { display: inline-block; padding: 0 6px; border-radius: 5px; background: rgba(255,255,255,.18); font: 700 12px var(--font); }
+.lobby-footer { margin-top: 8px; text-align: center; font-size: 15px; }
+.lobby-footer .go { color: var(--accent); animation: blink 1s infinite; }
+.controls h3 { margin: 12px 0 4px; font-size: 15px; }
+.controls .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 900px) {
+  .lobby-top { grid-template-columns: 1fr; }
+  .lobby-seats { grid-template-columns: repeat(2, 1fr); }
+}
