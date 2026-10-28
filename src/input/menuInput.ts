@@ -1,6 +1,7 @@
 // Menu navigation from keyboard and gamepad, as discrete actions with key repeat.
 
 import { PAD, pressed, axis } from './gamepad';
+import { isTyping } from './keyboard';
 
 export type MenuAction = 'up' | 'down' | 'left' | 'right' | 'confirm' | 'back' | 'pause';
 
@@ -27,6 +28,8 @@ export class MenuInput {
   constructor(target: Window = window) {
     target.addEventListener('keydown', (e) => {
       if (e.repeat && (e.code === 'Escape' || e.code === 'Enter')) return;
+      // Text fields handle their own keys; only Escape still means "back".
+      if (isTyping(e) && e.code !== 'Escape') return;
       // One action per key press: Escape is "back" (which also pauses a race).
       const a = e.code === 'KeyP' ? 'pause' : KEY_ACTIONS[e.code];
       if (a) this.emit(a, 'key');

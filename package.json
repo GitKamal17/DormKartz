@@ -4,11 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Arcade kart racer for the browser",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p server && vite build && npm run build:server",
+    "build:server": "esbuild server/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-server/server.mjs --log-level=warning",
+    "server": "npm run build:server && node dist-server/server.mjs",
+    "start": "node dist-server/server.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && node e2e/smoke.mjs",
@@ -17,12 +23,14 @@
   },
   "devDependencies": {
     "@types/three": "0.185.0",
+    "@types/ws": "8.18.1",
     "playwright": "1.63.0",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vitest": "5.0.3"
   },
   "dependencies": {
-    "three": "0.185.1"
+    "three": "0.185.1",
+    "ws": "8.21.3"
   }
 }

@@ -54,7 +54,7 @@ async function enterRace(page, i, mode = 'single') {
     await waitScreen(page, 'cc');
     await press(page, 'Enter'); // 100cc
   } else {
-    await press(page, 'ArrowDown', 3); // Time Trial (after Grand Prix, Single Race, Party Race)
+    await press(page, 'ArrowDown', 4); // Time Trial (after Grand Prix, Single Race, Party Race, Online)
     await press(page, 'Enter');
   }
   await waitScreen(page, 'character');

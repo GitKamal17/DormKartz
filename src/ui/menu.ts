@@ -67,6 +67,10 @@ export class Menu {
     return this.screen;
   }
 
+  get focusIndex(): number {
+    return this.focus;
+  }
+
   get visible(): boolean {
     return this.screen !== null;
   }

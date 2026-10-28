@@ -331,7 +331,8 @@ export class GameRenderer {
     }
   }
 
-  render(alpha: number, dt: number): void {
+  /** `simTime` overrides tick + alpha as the clock for scheduled hazards (online play interpolates over several ticks). */
+  render(alpha: number, dt: number, simTime?: number): void {
     const s = this.session;
     if (!s || !this.world || !this.entities) return;
     this.time += dt;
@@ -348,7 +349,7 @@ export class GameRenderer {
       if (gk && s.ghost?.active) this.ghost.update(gk, track, s.ghostPrev[0], s.ghostPrev[1], s.ghostPrev[2], s.ghostPrev[3], alpha, dt, this.time, this.particles);
       this.ghost.shadow.visible = false;
     }
-    this.entities.update(st, st.tick + alpha, alpha, this.time, this.particles);
+    this.entities.update(st, simTime ?? st.tick + alpha, alpha, this.time, this.particles);
     this.particles.update(dt);
     this.world.padTexture.offset.y -= dt * 2.5;
     if (this.world.liquid) {

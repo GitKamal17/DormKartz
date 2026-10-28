@@ -188,3 +188,54 @@ kbd { display: inline-block; padding: 0 6px; border-radius: 5px; background: rgb
   .lobby-top { grid-template-columns: 1fr; }
   .lobby-seats { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------- Online ---------- */
+.screen-online .menu-extra { order: -1; }
+.net-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.net-form label { display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 14px; opacity: .9; }
+.net-form input { font: 800 22px var(--font); padding: 10px 14px; border-radius: 12px; border: 2px solid var(--panel-edge); background: rgba(255,255,255,.08); color: var(--ink); outline: none; user-select: text; min-width: 0; }
+.net-form input:focus { border-color: var(--focus); }
+.net-form .net-code { font-family: var(--display); letter-spacing: 6px; text-transform: uppercase; }
+.net-msg { min-height: 1.3em; margin: 10px 0 0; color: var(--accent); font-weight: 700; }
+.room-code { display: flex; flex-direction: column; align-items: center; padding: 10px; border-radius: 16px; background: rgba(255,255,255,.07); }
+.room-code small { opacity: .75; font-weight: 700; }
+.room-code b { font-family: var(--display); font-size: clamp(44px, 9vw, 72px); letter-spacing: 10px; color: var(--accent); user-select: text; }
+.room-share, .room-settings { font-size: 14px; opacity: .85; line-height: 1.45; }
+.room-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.room-players li { padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,.05); }
+.room-players li.away { opacity: .5; }
+.room-players small { opacity: .7; font-weight: 700; margin-left: 4px; }
+.menu-item.start:not(.disabled) { background: rgba(93,255,122,.14); }
+b.pname { color: var(--accent); margin-right: 4px; }
+.net-banner { position: absolute; left: 50%; top: 10px; transform: translate(-50%, -150%); padding: 8px 18px; border-radius: 999px; background: rgba(10,6,25,.85); border: 1px solid var(--panel-edge); font-weight: 800; z-index: 60; transition: transform .2s; pointer-events: none; max-width: calc(100vw - 32px); text-align: center; }
+.net-banner.show { transform: translate(-50%, 0); }
+
+/* ---------- Touch controls ---------- */
+.touch-ui { position: absolute; inset: 0; display: none; pointer-events: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
+.touch-ui.show { display: block; }
+.tc-steer { position: absolute; left: 0; bottom: 0; width: 46%; height: 72%; pointer-events: auto; touch-action: none; }
+.tc-base { position: absolute; left: 22%; top: 60%; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: rgba(255,255,255,.08); border: 3px solid rgba(255,255,255,.25); opacity: .55; transition: opacity .15s; }
+.tc-base.on { opacity: 1; }
+.tc-knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(255,255,255,.55); box-shadow: 0 3px 10px rgba(0,0,0,.4); }
+.tc-btn { position: absolute; display: grid; place-items: center; border-radius: 50%; pointer-events: auto; touch-action: none; font: 800 14px var(--display); color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,.5); background: rgba(10,6,25,.35); border: 3px solid rgba(255,255,255,.55); }
+.tc-btn.down { background: rgba(255,210,58,.45); border-color: var(--accent); transform: scale(.95); }
+.tc-drift { right: max(24px, env(safe-area-inset-right)); bottom: 28px; width: 104px; height: 104px; font-size: 17px; }
+.tc-item { right: calc(max(24px, env(safe-area-inset-right)) + 116px); bottom: 20px; width: 78px; height: 78px; }
+.tc-brake { right: calc(max(24px, env(safe-area-inset-right)) + 14px); bottom: 146px; width: 70px; height: 70px; font-size: 12px; }
+.tc-look { right: calc(max(24px, env(safe-area-inset-right)) + 104px); bottom: 112px; width: 54px; height: 54px; font-size: 13px; }
+.tc-pause { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); width: 46px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: rgba(10,6,25,.45); font: 800 14px var(--display); pointer-events: auto; }
+/* Make room for the thumbs: the place sits beside the item box and the minimap under it. */
+.touch .hud-minimap { right: auto; bottom: auto; left: 12px; top: calc(30px + 84px * var(--s)); transform-origin: top left; }
+.touch .hud-place { bottom: auto; top: 14px; left: calc(34px + 84px * var(--s)); transform-origin: top left; }
+.touch .hud-speed { display: none; }
+.touch .menu-item { min-height: 48px; }
+.touch.racing::after { content: 'Turn your phone sideways to race'; position: absolute; inset: 0; display: none; place-items: center; padding: 32px; text-align: center; background: #120c24; font: 800 26px var(--display); z-index: 80; }
+@media (orientation: portrait) { .touch.racing::after { display: grid; } }
+@media (max-height: 500px) {
+  .screen { padding: 14px 18px; max-height: calc(100vh - 16px); }
+  .screen h1 { font-size: 26px; }
+  .screen .subtitle { margin-bottom: 10px; font-size: 14px; }
+  .menu-item { padding: 9px 14px; font-size: 16px; }
+  .menu-list { gap: 6px; }
+  .net-form input { font-size: 18px; padding: 7px 12px; }
+}

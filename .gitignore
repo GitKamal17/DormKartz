@@ -6,3 +6,4 @@ e2e/smoke.log
 plots
 *.log
 .DS_Store
+dist-server

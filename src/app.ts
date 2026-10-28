@@ -4,16 +4,22 @@
 import { AudioEngine, MENU_MUSIC } from './audio/audio';
 import { FixedLoop } from './game/loop';
 import { GrandPrix, type Racer } from './game/grandPrix';
-import { loadGhost, loadRecord, saveGhost, saveRecord } from './game/ghost';
+import { loadGhost, loadRecord, packInput, quantize, saveGhost, saveRecord } from './game/ghost';
 import { controlsFor, deviceLabel, inputOptionsFor, isPad, padIndex, PLAYER_COLORS, viewportRects, type DeviceId, type PartyMember } from './game/party';
 import { RaceSession, type GameMode, type PlayerSlot } from './game/session';
 import { loadSettings, saveSettings, type Settings } from './game/settings';
+import { load, save } from './game/storage';
 import { AIInput } from './input/ai';
 import { DeviceInput } from './input/devices';
 import { getPad } from './input/gamepad';
 import { installKeyboard } from './input/keyboard';
 import { LocalInput } from './input/local';
 import { MenuInput, type MenuAction } from './input/menuInput';
+import { TouchControls, TouchInput, touchDevice } from './input/touch';
+import { blankInput, type InputSource } from './input/types';
+import { NetClient, type NetStatus } from './net/client';
+import { NetRace } from './net/netRace';
+import { CODE_LENGTH, normalizeCode, type RaceStart, type ServerMessage } from './net/protocol';
 import { GameRenderer } from './render/renderer';
 import { CHARACTERS, getCharacter } from './sim/characters';
 import { SPEED_CLASS, TICK_RATE } from './sim/config';
@@ -33,6 +39,10 @@ const AUTOPILOT = params.has('autopilot');
 
 function hexColor(c: number): string {
   return '#' + c.toString(16).padStart(6, '0');
+}
+
+function escapeHtml(t: string): string {
+  return t.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
 function statBars(c: { speed: number; accel: number; handling: number; weight: number }): string {
@@ -85,6 +95,18 @@ export class App {
   private fpsTime = 0;
   private lastTT: { total: number; best: number; newRecord: boolean; newLap: boolean } | null = null;
 
+  readonly touch: TouchControls;
+  private touchMode = touchDevice();
+  readonly net: NetClient;
+  /** The online race on screen, if any (the server runs it). */
+  private netRace: NetRace | null = null;
+  /** In the online menus/room (pickers send choices to the room instead of starting races). */
+  private online = false;
+  private onlineMessage = '';
+  private readonly netInput = blankInput();
+  private readonly banner: HTMLDivElement;
+  private bannerTimer = 0;
+
   constructor(private readonly container: HTMLElement) {
     const canvas = document.createElement('canvas');
     canvas.id = 'game';
@@ -93,9 +115,21 @@ export class App {
     this.hudLayer = document.createElement('div');
     this.hudLayer.className = 'hud-layer';
     container.appendChild(this.hudLayer);
+    this.touch = new TouchControls(container, () => {
+      if (!this.menu.visible) this.pause();
+    });
     this.uiLayer = document.createElement('div');
     this.uiLayer.className = 'ui-layer';
     container.appendChild(this.uiLayer);
+    this.banner = document.createElement('div');
+    this.banner.className = 'net-banner';
+    container.appendChild(this.banner);
+    container.classList.toggle('touch', this.touchMode);
+    this.touch.active = this.touchMode;
+    this.net = new NetClient(
+      (m) => this.onNet(m),
+      (st) => this.onNetStatus(st),
+    );
     this.fpsEl = document.createElement('div');
     this.fpsEl.className = 'fps';
     container.appendChild(this.fpsEl);
@@ -109,7 +143,14 @@ export class App {
     this.menuInput.on((a, source) => this.onMenuAction(a, source));
     this.devices = new DeviceInput();
     this.devices.on((d, a) => this.lobby?.handle(d, a));
-    window.addEventListener('pointerdown', () => this.audio.unlock());
+    // A backgrounded phone stops sending input; let go of everything first.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && this.netRace) this.net.sendInput(packInput(blankInput()), performance.now());
+    });
+    window.addEventListener('pointerdown', (e) => {
+      this.audio.unlock();
+      if (e.pointerType === 'touch') this.enterTouchMode();
+    });
     window.addEventListener('keydown', () => this.audio.unlock());
     window.addEventListener('resize', () => {
       this.renderer.resize();
@@ -118,7 +159,7 @@ export class App {
     this.settings = loadSettings();
     this.applySettings();
     this.loop = new FixedLoop(
-      () => this.session?.tick(),
+      () => (this.netRace ? this.sendNetInput() : this.session?.tick()),
       (alpha, dt) => this.frame(alpha, dt),
     );
   }
@@ -126,6 +167,11 @@ export class App {
   start(): void {
     this.startAttract();
     this.loop.start();
+    if (this.net.resume()) {
+      this.online = true;
+      this.showBanner('Rejoining your room…');
+      return;
+    }
     this.showTitle();
   }
 
@@ -138,6 +184,13 @@ export class App {
     if (this.lobby) this.devices.poll(now);
     else this.menuInput.pollGamepad(now);
     const s = this.session;
+    let simTime: number | undefined;
+    if (this.netRace) {
+      alpha = this.netRace.update(now, dt);
+      simTime = this.netRace.time;
+    }
+    // Touch controls while racing; once you finish a CPU drives you home, so they go away.
+    this.touch.show(this.touchMode && !!s && !this.attract && !this.resultsShown && !this.menu.visible && this.humans.some((h) => !s.kart(h.id).finished));
     if (s) {
       const events = s.drainEvents();
       this.renderer.onEvents(events);
@@ -157,7 +210,7 @@ export class App {
           this.audio.updateEngine(h.id, s.kart(h.id), s.lastInput.get(h.id)?.throttle ?? 0, !this.paused);
         }
       }
-      this.renderer.render(alpha, dt);
+      this.renderer.render(alpha, dt, simTime);
       if (!this.attract) {
         this.renderer.viewports.forEach((vp, i) => {
           const g = s.ghost?.active ? s.ghost.state!.karts[0] : null;
@@ -165,7 +218,7 @@ export class App {
         });
         this.mapPanel?.update(s.state);
         this.checkControllers();
-        this.checkRaceEnd();
+        if (!this.netRace) this.checkRaceEnd();
       } else if (s.state.phase === 'finished' || s.state.tick > 60 * TICK_RATE * 3) {
         this.startAttract();
       }
@@ -235,6 +288,7 @@ export class App {
     this.audio.stopEngines();
     this.renderer.unload();
     this.session = null;
+    this.netRace = null;
     this.humans = [];
     this.paused = false;
     this.resultsShown = false;
@@ -250,9 +304,9 @@ export class App {
     return [{ id: 0, characterId: this.characterId, device: null, label: 'You', color: PLAYER_COLORS[0] }];
   }
 
-  private humanInput(h: Human) {
+  private humanInput(h: Human): InputSource {
     if (AUTOPILOT) return new AIInput(0.95, `autopilot-${h.id}`);
-    return h.device ? new LocalInput(inputOptionsFor(h.device, this.party ?? [])) : new LocalInput();
+    return h.device ? new LocalInput(inputOptionsFor(h.device, this.party ?? [])) : new TouchInput(this.touch);
   }
 
   private buildSlots(humans: Human[], rng: SeededRandom): PlayerSlot[] {
@@ -361,6 +415,10 @@ export class App {
 
   private pause(reason?: string): void {
     if (!this.session || this.paused) return;
+    if (this.netRace) {
+      this.pauseOnline();
+      return;
+    }
     this.paused = true;
     this.loop.ticking = false;
     this.audio.suspend(true);
@@ -399,6 +457,7 @@ export class App {
   }
 
   private quitToMenu(): void {
+    this.leaveOnline();
     this.gp = null;
     this.party = null;
     this.audio.stopMusic();
@@ -414,15 +473,16 @@ export class App {
     this.menu.show({
       id: 'title',
       className: 'title',
-      items: [{ label: 'Press Enter / A to start', id: 'start', className: 'press-start', action: () => this.showMain() }],
+      items: [{ label: this.touchMode ? 'Tap to start' : 'Press Enter / A to start', id: 'start', className: 'press-start', action: () => this.showMain() }],
       extra: (root) => {
         root.innerHTML = '<div class="logo"><span>DORM</span><span>KARTZ</span></div>';
       },
-      footer: 'Keyboard or gamepad · <b>Esc</b> pauses',
+      footer: this.touchMode ? 'Tap to start · landscape works best' : 'Keyboard, gamepad or touch · <b>Esc</b> pauses',
     });
   }
 
   private showMain(): void {
+    this.leaveOnline();
     this.gp = null;
     this.party = null;
     this.audio.unlock();
@@ -435,6 +495,7 @@ export class App {
         { label: 'Grand Prix', id: 'gp', html: '<small>4 races · points · podium</small>', action: () => ((this.mode = 'gp'), this.showCC()) },
         { label: 'Single Race', id: 'single', html: '<small>any track, any class</small>', action: () => ((this.mode = 'single'), this.showCC()) },
         { label: 'Party Race', id: 'party', html: '<small>2–4 players, split screen</small>', action: () => this.showLobby() },
+        { label: 'Online', id: 'online', html: '<small>friends on their own phone or computer · room code</small>', action: () => this.showOnline() },
         { label: 'Time Trial', id: 'tt', html: '<small>race your ghost</small>', action: () => ((this.mode = 'tt'), this.showCharacters()) },
         { label: 'Settings', id: 'settings', action: () => this.showSettings() },
       ],
@@ -521,6 +582,10 @@ export class App {
 
   private showCharacters(): void {
     if (!this.preview) this.preview = new Preview();
+    // Online, each racer can only be picked by one player in the room.
+    const room = this.online ? this.net.room : null;
+    if (room) this.characterId = room.players.find((p) => p.id === this.net.you)?.characterId ?? this.characterId;
+    const taken = new Set(room ? room.players.filter((p) => p.id !== this.net.you).map((p) => p.characterId) : []);
     const preview = this.preview;
     let info: HTMLDivElement | null = null;
     const update = (i: number) => {
@@ -538,8 +603,14 @@ export class App {
         id: `char-${c.id}`,
         className: 'char-card',
         html: `<span class="swatch" style="background:${hexColor(c.color)};border-color:${hexColor(c.accent)}"></span>`,
+        disabled: taken.has(c.id),
         action: () => {
           this.characterId = c.id;
+          if (this.online) {
+            this.net.send({ type: 'pick', characterId: c.id });
+            this.showRoom();
+            return;
+          }
           if (this.mode === 'gp') this.showCups();
           else this.showTracks();
         },
@@ -555,7 +626,7 @@ export class App {
         update(Math.max(0, CHARACTERS.findIndex((c) => c.id === this.characterId)));
         return () => preview.stop();
       },
-      onBack: () => (this.mode === 'tt' ? this.showMain() : this.showCC()),
+      onBack: () => (this.online ? this.showRoom() : this.mode === 'tt' ? this.showMain() : this.showCC()),
     });
   }
 
@@ -597,17 +668,22 @@ export class App {
         label: t.name,
         id: `track-${t.id}`,
         className: `track-card cup-${t.cup}`,
-        action: () => this.startRace(t.id),
+        action: () => {
+          if (!this.online) return this.startRace(t.id);
+          this.trackId = t.id;
+          this.net.send({ type: 'settings', settings: { trackId: t.id } });
+          this.showRoom();
+        },
       })),
-      initial: Math.max(0, TRACKS.findIndex((t) => t.id === this.trackId)),
+      initial: Math.max(0, TRACKS.findIndex((t) => t.id === (this.online ? this.net.room?.settings.trackId : this.trackId))),
       onFocus: update,
       extra: (root) => {
         detail = document.createElement('div');
         detail.className = 'track-detail';
         root.appendChild(detail);
-        update(Math.max(0, TRACKS.findIndex((t) => t.id === this.trackId)));
+        update(Math.max(0, TRACKS.findIndex((t) => t.id === (this.online ? this.net.room?.settings.trackId : this.trackId))));
       },
-      onBack: () => (this.party ? this.showCC() : this.showCharacters()),
+      onBack: () => (this.online ? this.showRoom() : this.party ? this.showCC() : this.showCharacters()),
     });
   }
 
@@ -753,6 +829,284 @@ export class App {
     });
   }
 
+  // --- Touch ----------------------------------------------------------------------
+
+  private enterTouchMode(): void {
+    if (this.touchMode) return;
+    this.touchMode = true;
+    this.touch.active = true;
+    this.container.classList.add('touch');
+    // Phones: go fullscreen in landscape on the first tap (both can fail; that's fine).
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen) {
+      el.requestFullscreen({ navigationUI: 'hide' })
+        .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
+        .catch(() => {});
+    }
+  }
+
+  // --- Online ---------------------------------------------------------------------
+
+  private showBanner(text: string, ms = 0): void {
+    clearTimeout(this.bannerTimer);
+    this.banner.textContent = text;
+    this.banner.classList.toggle('show', !!text);
+    if (ms) this.bannerTimer = window.setTimeout(() => this.banner.classList.remove('show'), ms);
+  }
+
+  private leaveOnline(): void {
+    this.online = false;
+    if (this.net.status !== 'idle') this.net.leave();
+    this.showBanner('');
+  }
+
+  private sendNetInput(): void {
+    const nr = this.netRace!;
+    const s = nr.session;
+    const q = quantize(nr.input.poll({ state: s.state, track: s.track }, nr.you), this.netInput);
+    s.lastInput.set(nr.you, q);
+    this.net.sendInput(packInput(this.paused ? blankInput() : q), performance.now());
+  }
+
+  private onNetStatus(st: NetStatus): void {
+    if (st === 'reconnecting' && this.net.inRoom) this.showBanner('Connection lost · reconnecting…');
+    else if (st === 'open') this.showBanner('');
+  }
+
+  private onNet(m: ServerMessage): void {
+    switch (m.type) {
+      case 'joined':
+        this.onlineMessage = '';
+        if (!this.netRace) this.showRoom();
+        break;
+      case 'room':
+        if (this.menu.current?.id === 'room') this.showRoom();
+        break;
+      case 'start':
+        this.startOnlineRace(m.race);
+        break;
+      case 'snap':
+        this.netRace?.push(m.s, performance.now());
+        break;
+      case 'end':
+        if (this.netRace && !this.resultsShown) {
+          this.netRace.order = m.order;
+          this.showOnlineResults();
+        }
+        break;
+      case 'error':
+        if (!this.online) break;
+        if (this.net.inRoom) {
+          this.showBanner(m.message, 3000);
+        } else {
+          // Couldn't connect, or lost the room for good.
+          this.onlineMessage = m.message;
+          if (this.netRace) {
+            this.audio.stopMusic();
+            this.audio.startMusic(MENU_MUSIC);
+            this.startAttract();
+          }
+          this.showBanner('');
+          this.showOnline();
+        }
+        break;
+    }
+  }
+
+  private showOnline(): void {
+    this.online = true;
+    this.mode = 'single';
+    this.party = null;
+    this.gp = null;
+    let nameEl: HTMLInputElement | null = null;
+    let codeEl: HTMLInputElement | null = null;
+    let msgEl: HTMLParagraphElement | null = null;
+    const say = (t: string) => {
+      this.onlineMessage = t;
+      if (msgEl) msgEl.textContent = t;
+    };
+    const name = () => {
+      const n = nameEl?.value.trim() ?? '';
+      save('online.name', n);
+      return n || getCharacter(this.characterId).name;
+    };
+    const join = () => {
+      const code = normalizeCode(codeEl?.value ?? '');
+      if (code.length !== CODE_LENGTH) {
+        say(`Type the ${CODE_LENGTH}-letter room code first.`);
+        codeEl?.focus();
+        return;
+      }
+      say(`Joining ${code}…`);
+      this.net.join(code, name());
+    };
+    this.menu.show({
+      id: 'online',
+      title: 'Online',
+      subtitle: 'Race friends on their own phone or computer. One person creates a room and shares the code.',
+      items: [
+        {
+          label: 'Create room',
+          id: 'create',
+          html: '<small>get a code to share</small>',
+          action: () => {
+            say('Creating a room…');
+            this.net.create(name());
+          },
+        },
+        { label: 'Join room', id: 'join', html: '<small>with the code from your friend</small>', action: join },
+        { label: 'Back', id: 'back', action: () => this.showMain() },
+      ],
+      extra: (root) => {
+        root.innerHTML = `<div class="net-form">
+          <label>Your name<input class="net-name" maxlength="14" autocomplete="nickname" enterkeyhint="done"></label>
+          <label>Room code<input class="net-code" maxlength="${CODE_LENGTH}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" enterkeyhint="go"></label>
+        </div><p class="net-msg"></p>`;
+        nameEl = root.querySelector('.net-name');
+        codeEl = root.querySelector('.net-code');
+        msgEl = root.querySelector('.net-msg');
+        nameEl!.value = load('online.name', '');
+        msgEl!.textContent = this.onlineMessage;
+        codeEl!.addEventListener('input', () => (codeEl!.value = normalizeCode(codeEl!.value)));
+        codeEl!.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') join();
+        });
+        nameEl!.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') nameEl!.blur();
+        });
+      },
+      onBack: () => this.showMain(),
+      footer: `Server: ${location.host}`,
+    });
+  }
+
+  private showRoom(): void {
+    const room = this.net.room;
+    if (!room || !this.net.inRoom) return this.showOnline();
+    this.online = true;
+    const me = room.players.find((p) => p.id === this.net.you)!;
+    const host = this.net.isHost;
+    const st = room.settings;
+    const focus = this.menu.current?.id === 'room' ? this.menu.focusIndex : 0;
+    const items: Screen['items'] = [{ label: `Racer: ${getCharacter(me.characterId).name}`, id: 'pick', action: () => this.showCharacters() }];
+    if (host) {
+      const ccs: SpeedClass[] = [50, 100, 150];
+      items.push(
+        { label: `Track: ${getTrackDef(st.trackId).name}`, id: 'track', action: () => this.showTracks() },
+        { label: `Speed: ${st.cc}cc`, id: 'cc', action: () => this.net.send({ type: 'settings', settings: { cc: ccs[(ccs.indexOf(st.cc) + 1) % 3] } }) },
+        { label: 'CPU racers', kind: 'toggle', value: st.cpus ? 1 : 0, onChange: (v) => this.net.send({ type: 'settings', settings: { cpus: !!v } }) },
+        { label: room.racing ? 'Race in progress…' : 'Start race', id: 'start', className: 'start', disabled: room.racing, action: () => this.net.send({ type: 'start' }) },
+      );
+    } else {
+      items.push({ label: room.racing ? 'Race in progress · you’re in the next one' : 'Waiting for the host to start', id: 'wait', disabled: true });
+    }
+    items.push({ label: 'Leave room', id: 'leave', action: () => this.quitToMenu() });
+    const hostName = room.players.find((p) => p.id === room.hostId)?.name ?? '';
+    const rows = room.players
+      .map((p) => {
+        const c = getCharacter(p.characterId);
+        const tags = [p.id === room.hostId ? 'host' : '', p.id === this.net.you ? 'you' : '', p.connected ? '' : 'reconnecting…'].filter(Boolean).join(' · ');
+        return `<li class="${p.connected ? '' : 'away'}"><span class="dot" style="background:${hexColor(c.color)}"></span><b>${escapeHtml(p.name)}</b> ${c.name}${tags ? ` <small>${tags}</small>` : ''}</li>`;
+      })
+      .join('');
+    this.menu.show({
+      id: 'room',
+      title: 'Room',
+      layout: 'side',
+      items,
+      initial: focus,
+      extra: (root) => {
+        root.innerHTML = `<div class="room-code"><small>Room code</small><b>${room.code}</b></div>
+          <p class="room-share">Friends open <b>${escapeHtml(location.host)}</b>, tap <b>Online</b>, then <b>Join room</b> with this code.</p>
+          <ul class="room-players">${rows}</ul>
+          ${host ? '' : `<p class="room-settings">${escapeHtml(hostName)} picks the race: <b>${getTrackDef(st.trackId).name}</b> · ${st.cc}cc · CPUs ${st.cpus ? 'on' : 'off'}</p>`}`;
+      },
+    });
+  }
+
+  private startOnlineRace(start: RaceStart): void {
+    const you = this.net.you;
+    if (this.netRace?.id === start.id || !start.humans.some((h) => h.id === you)) return;
+    this.menu.close();
+    this.closeLobby();
+    this.preview?.stop();
+    this.clearRace();
+    this.attract = false;
+    this.mode = 'single';
+    const input: InputSource = AUTOPILOT ? new AIInput(0.95, `autopilot-${you}`) : new TouchInput(this.touch);
+    const nr = new NetRace(start, you, input);
+    this.netRace = nr;
+    this.session = nr.session;
+    this.trackId = start.config.trackId;
+    this.cc = start.config.speedClass;
+    const mine = start.config.karts.find((k) => k.id === you)!;
+    this.humans = [{ id: you, characterId: mine.characterId, device: null, label: 'You', color: PLAYER_COLORS[0] }];
+    this.renderer.load(nr.session, [you]);
+    // Other humans get a colored ring on the minimap.
+    const colors = new Map(start.humans.filter((h) => h.id !== you).map((h, i) => [h.id, PLAYER_COLORS[(i + 1) % PLAYER_COLORS.length]] as const));
+    const hud = new Hud(this.hudLayer, nr.session.track, you, start.config.laps, { humans: colors });
+    hud.setRect(this.renderer.viewports[0].rect);
+    this.huds = [hud];
+    this.audio.unlock();
+    this.audio.startMusic(getTrackDef(this.trackId).music);
+    this.audio.startEngines([you]);
+    this.container.classList.add('racing');
+    this.loop.ticking = true;
+  }
+
+  /** Online races can't pause; this just covers the screen (your kart coasts). */
+  private pauseOnline(): void {
+    this.paused = true;
+    const resume = () => {
+      this.menu.close();
+      this.paused = false;
+    };
+    this.menu.show({
+      id: 'pause',
+      title: 'Online race',
+      subtitle: 'The race keeps going while this is open.',
+      className: 'overlay small',
+      items: [
+        { label: 'Resume', id: 'resume', action: resume },
+        { label: 'Leave room', id: 'quit', action: () => this.quitToMenu() },
+      ],
+      onBack: resume,
+    });
+  }
+
+  private showOnlineResults(): void {
+    const nr = this.netRace!;
+    const s = nr.session;
+    this.paused = false;
+    this.resultsShown = true;
+    const order = nr.order ?? s.resultOrder();
+    const names = new Map(nr.humans.map((h) => [h.id, h.name] as const));
+    const rows = order
+      .map((id, i) => {
+        const k = s.kart(id);
+        const c = getCharacter(k.characterId);
+        const time = k.finished ? formatTime(k.finishTick - s.state.goTick) : '--:--.--';
+        const who = names.has(id) ? `<b class="pname">${escapeHtml(names.get(id)!)}</b> ` : '';
+        return `<tr class="${id === nr.you ? 'me' : ''}"><td>${i + 1}${ordinalSuffix(i + 1)}</td><td><span class="dot" style="background:${hexColor(c.color)}"></span>${who}${c.name}</td><td>${time}</td></tr>`;
+      })
+      .join('');
+    const place = order.indexOf(nr.you) + 1;
+    this.menu.show({
+      id: 'results',
+      title: 'Results',
+      subtitle: `${getTrackDef(this.trackId).name} · you finished ${place}${ordinalSuffix(place)}`,
+      className: 'overlay',
+      horizontal: true,
+      items: [
+        { label: 'Back to room', id: 'room', action: () => (this.clearRaceKeepMenu(), this.showRoom()) },
+        { label: 'Leave room', id: 'menu', action: () => this.quitToMenu() },
+      ],
+      extra: (root) => {
+        root.innerHTML = `<table class="results">${rows}</table>`;
+      },
+    });
+  }
+
   private showSettings(): void {
     const s = this.settings;
     const change = () => {
@@ -829,6 +1183,8 @@ export class App {
       lobby: this.lobby ? this.lobby.seats.map((x) => ({ device: x.device, ready: x.ready, characterId: CHARACTERS[x.cursor].id })) : null,
       player: players[0] ?? null,
       players,
+      online: { status: this.net.status, code: this.net.room?.code ?? null, you: this.net.you, host: this.net.isHost, players: this.net.room?.players.length ?? 0, racing: !!this.netRace },
+      touch: this.touchMode,
     };
   }
 }

@@ -9,11 +9,18 @@ export function installKeyboard(target: Window = window): void {
   if (installed) return;
   installed = true;
   target.addEventListener('keydown', (e) => {
+    if (isTyping(e)) return;
     held.add(e.code);
     if (GAME_KEYS.has(e.code)) e.preventDefault();
   });
   target.addEventListener('keyup', (e) => held.delete(e.code));
   target.addEventListener('blur', () => held.clear());
+}
+
+/** True when a key press is going into a text field (room code, name), not the game. */
+export function isTyping(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 }
 
 export function isHeld(code: string): boolean {

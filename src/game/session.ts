@@ -15,7 +15,8 @@ export type GameMode = 'gp' | 'single' | 'tt';
 /** A participant. Nothing assumes there is exactly one human or that it is slot 0. */
 export interface PlayerSlot {
   id: PlayerId;
-  kind: 'local' | 'cpu';
+  /** 'remote' is a human on another device (online play; only the server ticks those). */
+  kind: 'local' | 'remote' | 'cpu';
   characterId: string;
   input: InputSource;
   /** Index among local players (drives viewport/HUD assignment); -1 for CPUs. */
@@ -40,6 +41,7 @@ export class RaceSession {
   readonly state: RaceState;
   readonly slots: PlayerSlot[];
   readonly mode: GameMode;
+  readonly seed: number;
   /** x, y, z, heading of every kart before the most recent tick. */
   readonly prev: Float64Array;
   /** Same for the ghost kart. */
@@ -57,6 +59,7 @@ export class RaceSession {
     this.track = getTrack(opts.trackId);
     this.slots = opts.slots;
     this.mode = opts.mode;
+    this.seed = opts.seed;
     const config: RaceConfig = {
       trackId: opts.trackId,
       speedClass: opts.speedClass,
@@ -107,7 +110,7 @@ export class RaceSession {
     for (const s of this.slots) {
       const k = this.state.karts.find((kk) => kk.id === s.id)!;
       let src: InputSource = s.input;
-      if (s.kind === 'local' && k.finished) {
+      if (s.kind !== 'cpu' && k.finished) {
         let ai = this.takeover.get(s.id);
         if (!ai) {
           ai = new AIInput(0.8, `takeover-${s.id}`);
@@ -150,6 +153,11 @@ export class RaceSession {
         }
       }
     }
+  }
+
+  /** Queues events that happened elsewhere (an online race the server is running). */
+  receive(events: RaceEvent[]): void {
+    for (const e of events) this.pending.push(e);
   }
 
   /** Events since the last call, oldest first. */
