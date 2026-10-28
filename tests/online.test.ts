@@ -138,6 +138,22 @@ describe('online rooms', () => {
     expect(back.last('joined')!.you).toEqual([p1]);
   });
 
+  it('answers pings and shows everyone the ping each device reports', () => {
+    const server = new RoomServer();
+    const host = client(server);
+    host.send({ type: 'create', v: PROTOCOL_VERSION, name: 'Host' });
+    host.send({ type: 'ping', t: 1234.5 });
+    expect(host.last('pong')!.t).toBe(1234.5);
+    expect(host.last('room')!.room.players[0].ping).toBe(-1);
+    host.send({ type: 'ping', t: 1, ms: 87 });
+    for (let i = 0; i < 2 * TICK_RATE; i++) server.advance();
+    expect(host.last('room')!.room.players[0].ping).toBe(87);
+    // Unchanged pings aren't re-sent.
+    const rooms = host.inbox.filter((m) => m.type === 'room').length;
+    for (let i = 0; i < 4 * TICK_RATE; i++) server.advance();
+    expect(host.inbox.filter((m) => m.type === 'room').length).toBe(rooms);
+  });
+
   it('rejects unknown codes and old clients, and frees empty rooms', () => {
     const server = new RoomServer();
     const a = client(server);

@@ -39,6 +39,8 @@ const GRACE_TICKS = 60 * TICK_RATE;
 /** Results stay up this long after the last human finishes before the room goes back to the lobby. */
 const END_DELAY_TICKS = Math.round(3.5 * TICK_RATE);
 const MAX_ROOMS = 500;
+/** How often everyone's ping is re-sent (only when it changed). */
+const PING_BROADCAST_TICKS = 2 * TICK_RATE;
 /** CPU kart ids start here so they never collide with player ids. */
 const CPU_ID_BASE = 100;
 
@@ -109,6 +111,8 @@ interface Player {
   conn: Conn | null;
   /** Tick (server clock) the connection dropped; -1 while connected. */
   droppedAt: number;
+  /** Round trip their device last reported, in ms (-1 until known). */
+  ping: number;
   input: RemoteInput;
   racing: boolean;
 }
@@ -140,6 +144,16 @@ export class Room {
   settings: RoomSettings = { trackId: TRACKS[0].id, cc: 100, cpus: true };
   race: Race | null = null;
   private races = 0;
+  /** Pings as last broadcast, so unchanged ones aren't sent again. */
+  private sentPings = '';
+
+  /** Sends the room again if anyone's ping changed (called every couple of seconds). */
+  sendPings(): void {
+    const key = this.players.map((p) => `${p.id}:${p.conn ? Math.round(p.ping / 10) : -1}`).join(',');
+    if (key === this.sentPings) return;
+    this.sentPings = key;
+    this.sendRoom();
+  }
 
   constructor(readonly code: string) {}
 
@@ -147,7 +161,7 @@ export class Room {
     return {
       code: this.code,
       hostId: this.hostId,
-      players: this.players.map((p) => ({ id: p.id, name: p.name, characterId: p.characterId, connected: !!p.conn, racing: p.racing })),
+      players: this.players.map((p) => ({ id: p.id, name: p.name, characterId: p.characterId, connected: !!p.conn, racing: p.racing, ping: p.conn ? p.ping : -1 })),
       settings: { ...this.settings },
       racing: !!this.race,
     };
@@ -169,7 +183,7 @@ export class Room {
     while (this.players.some((p) => p.id === id)) id++;
     const taken = new Set(this.players.map((p) => p.characterId));
     const characterId = (CHARACTERS.find((c) => !taken.has(c.id)) ?? CHARACTERS[0]).id;
-    const p: Player = { id, name: cleanName(name), characterId, token, conn, droppedAt: -1, input: new RemoteInput(), racing: false };
+    const p: Player = { id, name: cleanName(name), characterId, token, conn, droppedAt: -1, ping: -1, input: new RemoteInput(), racing: false };
     this.players.push(p);
     if (this.players.length === 1) this.hostId = id;
     return p;
@@ -352,6 +366,11 @@ class Client {
         return this.server.rejoin(this, String(msg.code ?? ''), String(msg.token ?? ''));
       case 'leave':
         return this.leave();
+      case 'ping':
+        if (typeof msg.t !== 'number') return;
+        this.reply({ type: 'pong', t: msg.t });
+        if (typeof msg.ms === 'number' && msg.ms >= 0 && msg.ms < 10000) for (const p of this.players) p.ping = Math.round(msg.ms);
+        return;
     }
     const room = this.room, first = this.players[0];
     if (!room || !first) return;
@@ -505,6 +524,7 @@ export class RoomServer {
     this.now++;
     for (const room of this.rooms.values()) {
       room.tick();
+      if (this.now % PING_BROADCAST_TICKS === 0) room.sendPings();
       // Free the seats of players who didn't come back in time (not mid-race: their kart is still out there).
       if (!room.race) {
         const gone = room.players.filter((p) => !p.conn && this.now - p.droppedAt > GRACE_TICKS);

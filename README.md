@@ -27,12 +27,12 @@ Use a recent Chrome, Edge or Firefox. A real GPU is strongly recommended (see [K
 Up to 8 players race in one room, each on their own phone, tablet or computer (or two sharing a computer in split screen). A small Node server runs the race; every device just sends its controls and draws what the server sends back.
 
 1. Someone picks **Online → Create room** and gets a 4-letter code.
-2. Everyone else opens the same web address, picks **Online**, types the code and taps **Join room**.
+2. They tap **Share invite link** (on a phone it opens the share sheet; on a computer it copies the link). Friends open the link, type their name and tap **Join room**. Or they open the same web address, pick **Online**, and type the code.
 3. Each player picks a racer. The host picks the track, speed class and whether CPUs fill the grid, then taps **Start race**.
 
 **Two players on one computer:** in the room, pick **Add a 2nd player here** and type their name. You each get your own seat: your own name, racer, spot on the grid and place in the results. The race is split screen, P1 on **W A S D** and P2 on **I J K L** (same keys as Party Race). Both seats come back together if the connection drops.
 
-After the race everyone lands back in the room for the next one. If someone's connection drops, or a phone locks or reloads the page, they get their seat back automatically within a minute; a CPU drives their kart in the meantime.
+Every player's ping shows next to their name in the room (green under 90 ms, yellow under 180, red above), and yours shows at the bottom of the screen during a race. After the race everyone lands back in the room for the next one. If someone's connection drops, or a phone locks or reloads the page, they get their seat back automatically within a minute; a CPU drives their kart in the meantime.
 
 **On a phone (Android Chrome, iPhone Safari):** hold it sideways. Drag anywhere on the left half of the screen to steer. Gas is automatic once the race starts. On the right are **DRIFT** (hold while steering), **ITEM**, **BRAKE** (also reverses), look-back **◀▶**, and **II** at the top for the menu. The first tap goes fullscreen. A keyboard or gamepad also works on any device.
 
@@ -49,7 +49,7 @@ That's enough for everyone on the same Wi-Fi: open `http://<your-computer's-ip>:
 
 **Render (free, no credit card):** push this repo to GitHub, then on [render.com](https://render.com) choose **New → Blueprint** and pick the repo. `render.yaml` sets everything up. You get an `https://….onrender.com` address to share. Free servers go to sleep after 15 minutes without visitors; the first visit after that takes about a minute to wake it up.
 
-**Pick the server region closest to the players** (Render: Oregon, Ohio, Virginia, Frankfurt or Singapore; it can only be chosen when the service is created). Your own kart reacts instantly wherever the server is, but bumps and items from other players are settled by the server, so a server across the world makes those land late.
+**Pick the server region closest to the players.** `render.yaml` uses Frankfurt (good for Europe); change `region:` to `oregon`, `ohio`, `virginia` or `singapore` if your players are elsewhere. Render only applies the region when the service is created, so moving an existing server means deleting it and creating it again from the Blueprint. Your own kart reacts instantly wherever the server is, but bumps and items from other players are settled by the server, so a server across the world makes those land late.
 
 **Anywhere that runs Docker** (Fly.io, Railway, a VPS): the `Dockerfile` builds and runs the whole thing on port 8787.
 

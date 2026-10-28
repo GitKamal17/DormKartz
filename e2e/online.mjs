@@ -33,12 +33,12 @@ const browser = await chromium.launch({ args }).catch(() => chromium.launch({ ar
 const base = `http://127.0.0.1:${PORT}/`;
 const errors = [];
 
-async function open(context, query, label) {
+async function open(context, query, label, screen = 'title') {
   const page = await context.newPage();
   page.on('console', (m) => m.type() === 'error' && errors.push(`${label}: ${m.text()}`));
   page.on('pageerror', (e) => errors.push(`${label}: ${e.message}`));
   await page.goto(base + query);
-  await page.waitForFunction(() => window.dormkartz?.status().screen === 'title', null, { timeout: 30000 });
+  await page.waitForFunction((s) => window.dormkartz?.status().screen === s, screen, { timeout: 30000 });
   await page.waitForTimeout(400);
   return page;
 }
@@ -51,20 +51,23 @@ try {
   await new Promise((r) => (host.onopen = r));
   host.send(JSON.stringify({ type: 'create', v: 3, name: 'Host' })); // PROTOCOL_VERSION in src/net/protocol.ts
   const phoneCtx = await browser.newContext({ viewport: { width: 740, height: 360 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
-  const phone = await open(phoneCtx, `?lag=${LAG}&jitter=30`, 'phone');
 
   const code = fromHost.find((m) => m.type === 'joined').room.code;
   console.log(`room ${code}, simulated round trip ${LAG} ms`);
 
-  await phone.tap('[data-id="start"]');
-  await phone.waitForTimeout(350);
-  await phone.tap('[data-id="online"]');
-  await phone.waitForTimeout(350);
+  // The friend opens the invite link: straight to Join with the code filled in.
+  const phone = await open(phoneCtx, `?lag=${LAG}&jitter=30&room=${code}`, 'phone', 'online');
+  check((await phone.inputValue('.net-code')) === code, 'invite link should fill in the room code');
+  check(!(await phone.evaluate(() => location.search.includes('room='))), 'invite code should be removed from the address after use');
   await phone.fill('.net-name', 'Phone');
-  await phone.fill('.net-code', code.toLowerCase());
   await phone.tap('[data-id="join"]');
   await phone.waitForFunction(() => window.dormkartz.status().screen === 'room', null, { timeout: 10000 });
   check((await status(phone)).online.players === 2, 'phone did not join the room');
+  await phone.waitForFunction(() => document.querySelectorAll('.room-players .ping').length === 1, null, { timeout: 8000 }).catch(() => {});
+  const pings = await phone.locator('.room-players .ping').allTextContents();
+  console.log(`room shows pings: ${pings.join(', ') || 'none'} (the host here is a bare socket that doesn't report one)`);
+  check(pings.length === 1 && parseInt(pings[0]) >= LAG * 0.8, `phone's own ping should show in the room (~${LAG} ms), got ${JSON.stringify(pings)}`);
+  await phone.screenshot({ path: `${OUT}/online-phone-room.png` });
 
   host.send(JSON.stringify({ type: 'start' }));
   await phone.waitForFunction(() => window.dormkartz.status().phase === 'racing', null, { timeout: 20000 });

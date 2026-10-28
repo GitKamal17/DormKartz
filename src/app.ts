@@ -41,6 +41,24 @@ function hexColor(c: number): string {
   return '#' + c.toString(16).padStart(6, '0');
 }
 
+/** Green / yellow / red badge for a round trip in ms. */
+function pingBadge(ms: number): string {
+  if (ms < 0) return '';
+  const cls = ms < 90 ? 'good' : ms < 180 ? 'ok' : 'bad';
+  return `<span class="ping ${cls}">${ms} ms</span>`;
+}
+
+/** A link that opens the game straight into joining `code` (keeping a custom ?server=). */
+function inviteUrl(code: string): string {
+  const u = new URL(location.href);
+  const server = u.searchParams.get('server');
+  u.search = '';
+  u.hash = '';
+  if (server) u.searchParams.set('server', server);
+  u.searchParams.set('room', code);
+  return u.toString();
+}
+
 function escapeHtml(t: string): string {
   return t.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
@@ -105,6 +123,13 @@ export class App {
   /** Which of this device's online players the racer picker is for. */
   private pickFor: PlayerId = -1;
   private readonly banner: HTMLDivElement;
+  /** Your ping during online races. */
+  private readonly pingEl: HTMLDivElement;
+  private shownPing = -2;
+  /** Room code from an invite link (?room=), waiting for a name before joining. */
+  private inviteCode = '';
+  /** The room as the room screen last drew it, minus pings (pings alone update in place). */
+  private roomDrawn = '';
   private bannerTimer = 0;
 
   constructor(private readonly container: HTMLElement) {
@@ -133,6 +158,9 @@ export class App {
     this.fpsEl = document.createElement('div');
     this.fpsEl.className = 'fps';
     container.appendChild(this.fpsEl);
+    this.pingEl = document.createElement('div');
+    this.pingEl.className = 'net-ping';
+    container.appendChild(this.pingEl);
     this.menu = new Menu(this.uiLayer, {
       move: () => this.audio.menuMove(),
       confirm: () => this.audio.menuConfirm(),
@@ -163,9 +191,21 @@ export class App {
   start(): void {
     this.startAttract();
     this.loop.start();
-    if (this.net.resume()) {
+    // An invite link (?room=ABCD) goes straight to joining that room.
+    const invite = normalizeCode(params.get('room') ?? '');
+    if (invite) {
+      const u = new URL(location.href);
+      u.searchParams.delete('room');
+      history.replaceState(null, '', u);
+    }
+    if (this.net.resume(invite || undefined)) {
       this.online = true;
       this.showBanner('Rejoining your room…');
+      return;
+    }
+    if (invite.length === CODE_LENGTH) {
+      this.inviteCode = invite;
+      this.showOnline();
       return;
     }
     this.showTitle();
@@ -183,6 +223,11 @@ export class App {
     if (this.netRace) {
       this.netRace.frame(dt);
       this.loop.rate = this.netRace.rate;
+    }
+    const ping = this.netRace ? this.net.ping : -2;
+    if (ping !== this.shownPing) {
+      this.shownPing = ping;
+      this.pingEl.innerHTML = ping >= 0 ? pingBadge(ping) : '';
     }
     // Touch controls while racing; once you finish a CPU drives you home, so they go away.
     this.touch.show(this.touchMode && this.humans.length === 1 && !!s && !this.attract && !this.resultsShown && !this.menu.visible && this.humans.some((h) => !s.kart(h.id).finished));
@@ -871,7 +916,10 @@ export class App {
         if (!this.netRace) this.showRoom();
         break;
       case 'room':
-        if (this.menu.current?.id === 'room') this.showRoom();
+        if (this.menu.current?.id !== 'room') break;
+        // Only pings changed: update them where they are instead of redrawing the screen.
+        if (this.roomKey() === this.roomDrawn) this.updatePings();
+        else this.showRoom();
         break;
       case 'start':
         this.startOnlineRace(m.race);
@@ -905,6 +953,8 @@ export class App {
   }
 
   private showOnline(): void {
+    const invite = this.inviteCode;
+    this.inviteCode = '';
     this.online = true;
     this.mode = 'single';
     this.party = null;
@@ -934,7 +984,10 @@ export class App {
     this.menu.show({
       id: 'online',
       title: 'Online',
-      subtitle: 'Race friends on their own phone or computer. One person creates a room and shares the code.',
+      subtitle: invite
+        ? `You're invited to room <b>${invite}</b>. Type your name and tap <b>Join room</b>.`
+        : 'Race friends on their own phone or computer. One person creates a room and shares the link or code.',
+      initial: invite ? 1 : 0,
       items: [
         {
           label: 'Create room',
@@ -957,6 +1010,7 @@ export class App {
         codeEl = root.querySelector('.net-code');
         msgEl = root.querySelector('.net-msg');
         nameEl!.value = load('online.name', '');
+        if (invite) codeEl!.value = invite;
         msgEl!.textContent = this.onlineMessage;
         codeEl!.addEventListener('input', () => (codeEl!.value = normalizeCode(codeEl!.value)));
         codeEl!.addEventListener('keydown', (e) => {
@@ -994,6 +1048,7 @@ export class App {
         this.showCharacters();
       },
     }));
+    items.push({ label: 'Share invite link', id: 'share', html: '<small>send it to friends: one tap and they’re in</small>', action: () => this.shareInvite(room.code) });
     if (two) items.push({ label: `Remove P2 (${locals[1].name})`, id: 'drop', action: () => this.net.dropLocal(locals[1].id) });
     else if (!this.touchMode) items.push({ label: 'Add a 2nd player here', id: 'add', html: '<small>split screen: W A S D vs I J K L</small>', disabled: room.players.length >= MAX_ROOM_PLAYERS, action: () => this.showAddPlayer() });
     if (host) {
@@ -1014,12 +1069,13 @@ export class App {
         const c = getCharacter(p.characterId);
         const n = this.net.mine.indexOf(p.id);
         const tags = [p.id === room.hostId ? 'host' : '', n < 0 ? '' : two ? `P${n + 1} here` : 'you', p.connected ? '' : 'reconnecting…'].filter(Boolean).join(' · ');
-        return `<li class="${p.connected ? '' : 'away'}"><span class="dot" style="background:${hexColor(c.color)}"></span><b>${escapeHtml(p.name)}</b> ${c.name}${tags ? ` <small>${tags}</small>` : ''}</li>`;
+        return `<li class="${p.connected ? '' : 'away'}"><span class="dot" style="background:${hexColor(c.color)}"></span><b>${escapeHtml(p.name)}</b> ${c.name}${tags ? ` <small>${tags}</small>` : ''}<span class="ping-slot" data-pid="${p.id}">${pingBadge(p.connected ? p.ping : -1)}</span></li>`;
       })
       .join('');
     const keys = two
       ? `<p class="room-keys"><b style="color:${PLAYER_COLORS[0]}">P1</b> W A S D · Space drift · E item &nbsp; <b style="color:${PLAYER_COLORS[1]}">P2</b> I J K L · ; drift · U item</p>`
       : '';
+    this.roomDrawn = this.roomKey();
     this.menu.show({
       id: 'room',
       title: 'Room',
@@ -1028,11 +1084,38 @@ export class App {
       initial: focus,
       extra: (root) => {
         root.innerHTML = `<div class="room-code"><small>Room code</small><b>${room.code}</b></div>
-          <p class="room-share">Friends open <b>${escapeHtml(location.host)}</b>, tap <b>Online</b>, then <b>Join room</b> with this code.</p>
+          <p class="room-share">Invite link: <b class="invite">${escapeHtml(inviteUrl(room.code))}</b><br>Or friends open <b>${escapeHtml(location.host)}</b>, tap <b>Online</b>, then <b>Join room</b> with the code.</p>
           <ul class="room-players">${rows}</ul>${keys}
           ${host ? '' : `<p class="room-settings">${escapeHtml(hostName)} picks the race: <b>${getTrackDef(st.trackId).name}</b> · ${st.cc}cc · CPUs ${st.cpus ? 'on' : 'off'}</p>`}`;
       },
     });
+  }
+
+  /** The room minus pings, to tell a ping-only update from a real change. */
+  private roomKey(): string {
+    const r = this.net.room;
+    return r ? JSON.stringify({ ...r, players: r.players.map((p) => ({ ...p, ping: 0 })), mine: this.net.mine }) : '';
+  }
+
+  private updatePings(): void {
+    for (const p of this.net.room?.players ?? []) {
+      const slot = this.uiLayer.querySelector(`.ping-slot[data-pid="${p.id}"]`);
+      if (slot) slot.innerHTML = pingBadge(p.connected ? p.ping : -1);
+    }
+  }
+
+  /** Phone: the share sheet (WhatsApp, Messages…). Computer: copies the link. */
+  private shareInvite(code: string): void {
+    const url = inviteUrl(code);
+    if (this.touchMode && navigator.share) {
+      navigator.share({ title: 'DormKartz', text: `Race me in DormKartz! Room ${code}`, url }).catch(() => {});
+      return;
+    }
+    if (!navigator.clipboard) return this.showBanner(url, 8000);
+    navigator.clipboard.writeText(url).then(
+      () => this.showBanner('Invite link copied. Paste it to your friends.', 3000),
+      () => this.showBanner(url, 8000),
+    );
   }
 
   /** A second player on this keyboard: they get their own name, racer and spot on the grid. */
@@ -1257,7 +1340,7 @@ export class App {
       lobby: this.lobby ? this.lobby.seats.map((x) => ({ device: x.device, ready: x.ready, characterId: CHARACTERS[x.cursor].id })) : null,
       player: players[0] ?? null,
       players,
-      online: { status: this.net.status, code: this.net.room?.code ?? null, you: this.net.mine, host: this.net.isHost, players: this.net.room?.players.length ?? 0, racing: !!this.netRace, rate: this.loop.rate, correction: this.netRace?.lastCorrection.get(this.netRace.you) ?? null, splitInputs: this.netRace?.locals.length ?? 0 },
+      online: { status: this.net.status, code: this.net.room?.code ?? null, you: this.net.mine, host: this.net.isHost, players: this.net.room?.players.length ?? 0, racing: !!this.netRace, rate: this.loop.rate, correction: this.netRace?.lastCorrection.get(this.netRace.you) ?? null, splitInputs: this.netRace?.locals.length ?? 0, ping: this.net.ping },
       touch: this.touchMode,
     };
   }

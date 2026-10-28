@@ -1,8 +1,12 @@
 # One-click deploy on Render (render.com → New → Blueprint → pick this repo).
+# Pick the region closest to the players: oregon, ohio, virginia, frankfurt or
+# singapore. Render can't move an existing service, so changing it means
+# creating the service again.
 services:
   - type: web
     name: dormkartz
     runtime: node
+    region: frankfurt
     plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start

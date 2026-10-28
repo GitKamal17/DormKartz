@@ -31,6 +31,8 @@ export interface RoomPlayer {
   connected: boolean;
   /** Still in the race that is running (false for anyone who joined during it). */
   racing: boolean;
+  /** Round trip to the server in ms, as their device last measured it (-1 until known). */
+  ping: number;
 }
 
 export interface RoomInfo {
@@ -64,7 +66,9 @@ export type ClientMessage =
   | { type: 'settings'; settings: Partial<RoomSettings> }
   | { type: 'start' }
   /** Sent every tick: `s` counts up by one per tick, `i` is one packed input per player on this device, in `you` order. */
-  | { type: 'input'; s: number; i: number[] };
+  | { type: 'input'; s: number; i: number[] }
+  /** Asks for a pong; `ms` reports this device's last measured round trip so others can see it. */
+  | { type: 'ping'; t: number; ms?: number };
 
 export type ServerMessage =
   /** `you` lists this device's players (P1 first). Sent again whenever that list changes. */
@@ -73,7 +77,8 @@ export type ServerMessage =
   | { type: 'error'; message: string }
   | { type: 'start'; race: RaceStart }
   | { type: 'snap'; s: Snapshot }
-  | { type: 'end'; order: PlayerId[] };
+  | { type: 'end'; order: PlayerId[] }
+  | { type: 'pong'; t: number };
 
 /** Everything in RaceState except config (sent once) and events (listed separately). */
 export interface Snapshot {

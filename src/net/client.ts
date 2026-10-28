@@ -58,6 +58,9 @@ export class NetClient {
   private retries = 0;
   private retryTimer = 0;
   private readonly lag = new FakeLag(new URLSearchParams(location.search));
+  /** Round trip to the server in ms, measured every couple of seconds (-1 until known). */
+  ping = -1;
+  private pingTimer = 0;
 
   constructor(
     private readonly onMessage: (m: ServerMessage) => void,
@@ -80,15 +83,18 @@ export class NetClient {
     this.open({ type: 'join', v: PROTOCOL_VERSION, code, name });
   }
 
-  /** After a page reload (or Android discarding the tab), takes our seat back. */
-  resume(): boolean {
+  /**
+   * After a page reload (or Android discarding the tab), takes our seat back.
+   * With `only`, resumes only if the saved seat is in that room (an invite link to another room wins).
+   */
+  resume(only?: string): boolean {
     let seat: { code: string; token: string } | null = null;
     try {
       seat = JSON.parse(sessionStorage.getItem(SEAT_KEY) ?? 'null');
     } catch {
       // No storage: nothing to resume.
     }
-    if (!seat?.code || !seat.token) return false;
+    if (!seat?.code || !seat.token || (only && seat.code !== only)) return false;
     this.setStatus('reconnecting');
     this.open({ type: 'rejoin', v: PROTOCOL_VERSION, code: seat.code, token: seat.token });
     return true;
@@ -118,6 +124,9 @@ export class NetClient {
 
   private reset(): void {
     clearTimeout(this.retryTimer);
+    clearInterval(this.pingTimer);
+    this.pingTimer = 0;
+    this.ping = -1;
     const ws = this.ws;
     this.ws = null;
     if (ws) {
@@ -189,17 +198,27 @@ export class NetClient {
       this.token = m.token;
       this.room = m.room;
       this.setStatus('open');
+      this.startPings();
       try {
         sessionStorage.setItem(SEAT_KEY, JSON.stringify({ code: m.room.code, token: m.token }));
       } catch {
         // Ignored: reloading the page will just need the code again.
       }
     } else if (m.type === 'room') this.room = m.room;
+    else if (m.type === 'pong') this.ping = Math.round(performance.now() - m.t);
     else if (m.type === 'error' && first.type === 'rejoin' && !this.inRoomConfirmed()) {
       // The room is gone; stop trying.
       this.reset();
     }
     this.onMessage(m);
+  }
+
+  /** Measures the round trip every 2 s and tells the server, so the room can show everyone's ping. */
+  private startPings(): void {
+    if (this.pingTimer) return;
+    const ping = () => this.send({ type: 'ping', t: performance.now(), ...(this.ping >= 0 ? { ms: this.ping } : {}) });
+    ping();
+    this.pingTimer = window.setInterval(ping, 2000);
   }
 
   private inRoomConfirmed(): boolean {
