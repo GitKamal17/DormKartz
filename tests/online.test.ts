@@ -33,7 +33,7 @@ describe('online rooms', () => {
     const friend = client(server);
     friend.send({ type: 'join', v: PROTOCOL_VERSION, code: joined.room.code.toLowerCase(), name: 'Friend' });
     const fj = friend.last('joined')!;
-    expect(fj.you).not.toBe(joined.you);
+    expect(fj.you).not.toEqual(joined.you);
     expect(host.last('room')!.room.players.map((p) => p.name)).toEqual(['Kamal', 'Friend']);
 
     // Characters are unique per room; only the host controls the race.
@@ -56,8 +56,8 @@ describe('online rooms', () => {
     }
     const snap = friend.last('snap')!;
     applySnapshot(local, snap.s);
-    const me = local.karts.find((k) => k.id === fj.you)!;
-    const idle = local.karts.find((k) => k.id === joined.you)!;
+    const me = local.karts.find((k) => k.id === fj.you[0])!;
+    const idle = local.karts.find((k) => k.id === joined.you[0])!;
     expect(local.phase).toBe('racing');
     expect(Math.hypot(me.vx, me.vz)).toBeGreaterThan(5);
     expect(Math.hypot(idle.vx, idle.vz)).toBeLessThan(1);
@@ -65,10 +65,10 @@ describe('online rooms', () => {
 
     // A dropped player keeps their seat and can rejoin with their token.
     friend.close();
-    expect(host.last('room')!.room.players.find((p) => p.id === fj.you)!.connected).toBe(false);
+    expect(host.last('room')!.room.players.find((p) => p.id === fj.you[0])!.connected).toBe(false);
     const again = client(server);
     again.send({ type: 'rejoin', v: PROTOCOL_VERSION, code: joined.room.code, token: fj.token });
-    expect(again.last('joined')!.you).toBe(fj.you);
+    expect(again.last('joined')!.you).toEqual(fj.you);
     expect(again.last('start')!.race.id).toBe(start.race.id);
 
     // Let CPUs (who take over finished humans) drive both karts home.
@@ -84,6 +84,58 @@ describe('online rooms', () => {
     for (let i = 0; i < 5 * TICK_RATE && !host.last('end'); i++) server.advance();
     expect(host.last('end')!.order.length).toBe(2);
     expect(host.last('room')!.room.racing).toBe(false);
+  });
+
+  it('seats two players on one device, each with their own racer, input and kart', () => {
+    const server = new RoomServer();
+    const host = client(server);
+    host.send({ type: 'create', v: PROTOCOL_VERSION, name: 'Kamal' });
+    const code = host.last('joined')!.room.code;
+    host.send({ type: 'add', name: 'Sam' });
+    const [p1, p2] = host.last('joined')!.you;
+    expect(host.last('joined')!.you.length).toBe(2);
+    expect(host.last('room')!.room.players.map((p) => p.name)).toEqual(['Kamal', 'Sam']);
+    host.send({ type: 'add', name: 'Third' });
+    expect(host.last('error')!.message).toMatch(/Up to 2/);
+
+    // Each picks their own racer; they can't share one.
+    host.send({ type: 'pick', characterId: 'tank', id: p2 });
+    host.send({ type: 'pick', characterId: 'tank', id: p1 });
+    expect(host.last('error')!.message).toMatch(/already/);
+    const players = host.last('room')!.room.players;
+    expect(players.find((p) => p.id === p2)!.characterId).toBe('tank');
+
+    // A friend joins from another device; the second local player isn't the host.
+    const friend = client(server);
+    friend.send({ type: 'join', v: PROTOCOL_VERSION, code, name: 'Friend' });
+    expect(friend.last('room')!.room.players.length).toBe(3);
+
+    host.send({ type: 'settings', settings: { cpus: false } });
+    host.send({ type: 'start' });
+    const start = host.last('start')!;
+    expect(start.race.humans.map((h) => h.id).sort()).toEqual([p1, p2, friend.last('joined')!.you[0]].sort());
+
+    // One input message carries both players, and each lands on its own kart.
+    const gas = packInput({ steer: 0, throttle: 1, brake: 0, drift: false, useItem: false, lookBack: false });
+    const left = packInput({ steer: -1, throttle: 0, brake: 0, drift: true, useItem: false, lookBack: false });
+    for (let i = 0; i < 2 * TICK_RATE; i++) {
+      host.send({ type: 'input', s: i + 1, i: [gas, left] });
+      server.advance();
+    }
+    const snap = host.last('snap')!.s;
+    const order = start.race.config.karts.map((k) => k.id);
+    expect(snap.inputs[order.indexOf(p1)]).toBe(gas);
+    expect(snap.inputs[order.indexOf(p2)]).toBe(left);
+    expect(snap.acks[p1][0]).toBe(2 * TICK_RATE);
+    expect(snap.acks[p2][0]).toBe(2 * TICK_RATE);
+
+    // Dropping the socket keeps both seats; rejoining with the token restores both.
+    host.close();
+    const back = client(server);
+    back.send({ type: 'rejoin', v: PROTOCOL_VERSION, code, token: host.last('joined')!.token });
+    expect(back.last('joined')!.you).toEqual([p1, p2]);
+    back.send({ type: 'drop', id: p2 });
+    expect(back.last('joined')!.you).toEqual([p1]);
   });
 
   it('rejects unknown codes and old clients, and frees empty rooms', () => {
@@ -122,7 +174,7 @@ describe('online prediction', () => {
       server.advance();
       while (toClient.length && toClient[0].at <= now) {
         const m = JSON.parse(toClient.shift()!.data) as ServerMessage;
-        if (m.type === 'joined') you = m.you;
+        if (m.type === 'joined') you = m.you[0];
         if (m.type === 'start') nr = new NetRace(m.race, [{ id: you, input: new AIInput(0.95, 'phone') }]);
         if (m.type === 'snap' && nr) {
           nr.onSnapshot(m.s);

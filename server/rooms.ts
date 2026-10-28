@@ -10,6 +10,7 @@ import { blankInput, type InputSource } from '../src/input/types';
 import {
   CODE_ALPHABET,
   CODE_LENGTH,
+  MAX_LOCAL,
   MAX_PLAYERS,
   PROTOCOL_VERSION,
   SNAPSHOT_EVERY,
@@ -161,13 +162,14 @@ export class Room {
     this.broadcast({ type: 'room', room: this.info() });
   }
 
-  add(name: string, conn: Conn): Player | null {
+  /** Seats a new player; a second player on the same device shares its token. */
+  add(name: string, conn: Conn, token = randomToken()): Player | null {
     if (this.players.length >= MAX_PLAYERS) return null;
     let id = 0;
     while (this.players.some((p) => p.id === id)) id++;
     const taken = new Set(this.players.map((p) => p.characterId));
     const characterId = (CHARACTERS.find((c) => !taken.has(c.id)) ?? CHARACTERS[0]).id;
-    const p: Player = { id, name: cleanName(name), characterId, token: randomToken(), conn, droppedAt: -1, input: new RemoteInput(), racing: false };
+    const p: Player = { id, name: cleanName(name), characterId, token, conn, droppedAt: -1, input: new RemoteInput(), racing: false };
     this.players.push(p);
     if (this.players.length === 1) this.hostId = id;
     return p;
@@ -200,8 +202,12 @@ export class Room {
     return null;
   }
 
-  configure(p: Player, s: Partial<RoomSettings>): string | null {
-    if (p.id !== this.hostId) return 'Only the host can change the race.';
+  private hosts(players: Player[]): boolean {
+    return players.some((p) => p.id === this.hostId);
+  }
+
+  configure(players: Player[], s: Partial<RoomSettings>): string | null {
+    if (!this.hosts(players)) return 'Only the host can change the race.';
     if (s.trackId !== undefined) {
       if (!TRACKS.some((t) => t.id === s.trackId)) return 'Unknown track.';
       this.settings.trackId = s.trackId;
@@ -214,8 +220,8 @@ export class Room {
     return null;
   }
 
-  start(p: Player): string | null {
-    if (p.id !== this.hostId) return 'Only the host can start the race.';
+  start(players: Player[]): string | null {
+    if (!this.hosts(players)) return 'Only the host can start the race.';
     if (this.race) return 'A race is already running.';
     const humans = this.players.filter((x) => x.conn);
     // Humans start at the back in a random order, like offline play.
@@ -293,10 +299,11 @@ export class Room {
   }
 }
 
-/** One connected socket. It belongs to at most one room at a time. */
+/** One connected socket (one device). It belongs to at most one room, with one or two players in it. */
 class Client {
   room: Room | null = null;
-  player: Player | null = null;
+  /** This device's players, P1 first. */
+  players: Player[] = [];
 
   constructor(
     private readonly server: RoomServer,
@@ -315,6 +322,17 @@ class Client {
     this.reply({ type: 'error', message });
   }
 
+  /** Tells the device who its players are, then everyone the new room state. */
+  seated(): void {
+    const room = this.room!;
+    this.reply({ type: 'joined', you: this.players.map((p) => p.id), token: this.players[0].token, room: room.info() });
+    room.sendRoom();
+  }
+
+  private mine(id: unknown): Player | undefined {
+    return id === undefined ? this.players[0] : this.players.find((p) => p.id === id);
+  }
+
   onMessage(raw: string): void {
     let msg: ClientMessage;
     try {
@@ -323,7 +341,6 @@ class Client {
       return;
     }
     if (!msg || typeof msg !== 'object') return;
-    const room = this.room, p = this.player;
     switch (msg.type) {
       case 'create':
       case 'join':
@@ -336,20 +353,43 @@ class Client {
       case 'leave':
         return this.leave();
     }
-    if (!room || !p) return;
+    const room = this.room, first = this.players[0];
+    if (!room || !first) return;
     let err: string | null = null;
     switch (msg.type) {
-      case 'input':
-        if (Number.isInteger(msg.s) && Array.isArray(msg.i) && Number.isInteger(msg.i[0]) && msg.i[0] >= 0) p.input.push(msg.s, msg.i[0]);
+      case 'input': {
+        if (!Number.isInteger(msg.s) || !Array.isArray(msg.i)) return;
+        this.players.forEach((p, n) => {
+          const packed = msg.i[n];
+          if (Number.isInteger(packed) && packed >= 0) p.input.push(msg.s, packed);
+        });
         return;
-      case 'pick':
+      }
+      case 'add': {
+        if (this.players.length >= MAX_LOCAL) return this.error(`Up to ${MAX_LOCAL} players can share one device.`);
+        const p = room.add(String(msg.name ?? ''), this.conn, first.token);
+        if (!p) return this.error('That room is full.');
+        this.players.push(p);
+        return this.seated();
+      }
+      case 'drop': {
+        const p = this.mine(msg.id);
+        if (!p || this.players.length < 2) return;
+        this.players.splice(this.players.indexOf(p), 1);
+        room.remove(p);
+        return this.seated();
+      }
+      case 'pick': {
+        const p = this.mine(msg.id);
+        if (!p) return;
         err = room.pick(p, String(msg.characterId));
         break;
+      }
       case 'settings':
-        err = msg.settings && typeof msg.settings === 'object' ? room.configure(p, msg.settings) : 'Bad settings.';
+        err = msg.settings && typeof msg.settings === 'object' ? room.configure(this.players, msg.settings) : 'Bad settings.';
         break;
       case 'start':
-        err = room.start(p);
+        err = room.start(this.players);
         break;
       default:
         return;
@@ -358,27 +398,29 @@ class Client {
     else if (msg.type !== 'start') room.sendRoom();
   }
 
-  /** Leaves the current room on purpose (the seat is freed right away). */
+  /** Leaves the current room on purpose (the seats are freed right away). */
   leave(): void {
-    const room = this.room, p = this.player;
+    const room = this.room, players = this.players;
     this.room = null;
-    this.player = null;
-    if (!room || !p) return;
-    room.remove(p);
+    this.players = [];
+    if (!room || !players.length) return;
+    for (const p of players) room.remove(p);
     this.server.cleanup(room);
     room.sendRoom();
   }
 
-  /** The socket closed: keep the seat for a while so the player can come back. */
+  /** The socket closed: keep the seats for a while so the players can come back. */
   onClose(): void {
-    const room = this.room, p = this.player;
+    const room = this.room, players = this.players.filter((p) => p.conn === this.conn);
     this.room = null;
-    this.player = null;
-    if (!room || !p || p.conn !== this.conn) return;
-    p.conn = null;
-    p.droppedAt = this.server.now;
-    if (p.racing) room.dropFromRace(p);
-    if (room.hostId === p.id) {
+    this.players = [];
+    if (!room || !players.length) return;
+    for (const p of players) {
+      p.conn = null;
+      p.droppedAt = this.server.now;
+      if (p.racing) room.dropFromRace(p);
+    }
+    if (players.some((p) => p.id === room.hostId)) {
       const other = room.players.find((x) => x.conn);
       if (other) room.hostId = other.id;
     }
@@ -404,18 +446,17 @@ export class RoomServer {
     }
   }
 
-  private seat(c: Client, room: Room, p: Player): void {
+  private seat(c: Client, room: Room, players: Player[]): void {
     c.room = room;
-    c.player = p;
-    c.reply({ type: 'joined', you: p.id, token: p.token, room: room.info() });
-    room.sendRoom();
+    c.players = players;
+    c.seated();
   }
 
   create(c: Client, name: string): void {
     if (this.rooms.size >= MAX_ROOMS) return c.error('The server is full right now. Try again in a bit.');
     const room = new Room(this.newCode());
     this.rooms.set(room.code, room);
-    this.seat(c, room, room.add(name, c.conn)!);
+    this.seat(c, room, [room.add(name, c.conn)!]);
   }
 
   join(c: Client, rawCode: string, name: string): void {
@@ -423,33 +464,38 @@ export class RoomServer {
     if (!room) return c.error(`No room with code ${normalizeCode(rawCode) || '(blank)'}. Check the code with the host.`);
     const p = room.add(name, c.conn);
     if (!p) return c.error('That room is full.');
-    this.seat(c, room, p);
+    this.seat(c, room, [p]);
   }
 
+  /** Gives a device back all its seats (they share one token). */
   rejoin(c: Client, rawCode: string, token: string): void {
     const room = this.rooms.get(normalizeCode(rawCode));
-    const p = room?.players.find((x) => x.token === token);
-    if (!room || !p) return c.error('That room has closed.');
-    if (p.conn && p.conn !== c.conn) {
+    const players = room?.players.filter((x) => x.token === token) ?? [];
+    if (!room || !players.length) return c.error('That room has closed.');
+    for (const old of new Set(players.map((p) => p.conn))) {
+      if (!old || old === c.conn) continue;
       try {
-        p.conn.close();
+        old.close();
       } catch {
         // Already gone.
       }
     }
-    p.conn = c.conn;
-    p.droppedAt = -1;
-    // A reloaded page numbers its inputs from scratch.
-    p.input.reset();
-    this.seat(c, room, p);
+    for (const p of players) {
+      p.conn = c.conn;
+      p.droppedAt = -1;
+      // A reloaded page numbers its inputs from scratch.
+      p.input.reset();
+    }
+    this.seat(c, room, players);
     const r = room.race;
-    if (r && p.racing) {
-      const slot = r.session.slots.find((s) => s.id === p.id);
-      if (slot) slot.input = p.input;
+    if (r && players.some((p) => p.racing)) {
+      for (const p of players) {
+        const slot = r.session.slots.find((s) => s.id === p.id);
+        if (slot && p.racing) slot.input = p.input;
+      }
       c.reply({ type: 'start', race: room.raceStart() });
     }
   }
-
   cleanup(room: Room): void {
     if (!room.players.length) this.rooms.delete(room.code);
   }

@@ -1,5 +1,5 @@
-// Party lobby: up to 4 players join with their own device and pick racers at
-// the same time, each with their own cursor.
+// Party lobby: two players join with their own half of the keyboard (or a
+// gamepad) and pick racers at the same time, each with their own cursor.
 
 import { CHARACTERS, getCharacter } from '../sim/characters';
 import { controlsFor, deviceLabel, isPad, MAX_PLAYERS, PLAYER_COLORS, type DeviceId, type PartyMember } from '../game/party';
@@ -27,7 +27,7 @@ function hex(c: number): string {
 
 const MENU_KEYS: Record<string, string> = {
   'kb-left': 'W A S D move · Space pick · Q back',
-  'kb-right': 'Arrows move · Enter pick · Backspace back',
+  'kb-right': 'I J K L move · ; or U pick · O back',
 };
 
 export class Lobby {
@@ -54,7 +54,7 @@ export class Lobby {
     this.root.innerHTML = `
       <div class="screen lobby" data-screen="lobby">
         <h1>Party Race</h1>
-        <p class="subtitle">2 to 4 players. One keyboard fits two players (left side + arrow side); players 3 and 4 need gamepads.</p>
+        <p class="subtitle">Two players, one screen: one on <b>W A S D</b>, one on <b>I J K L</b>. A gamepad works for either player.</p>
         <div class="lobby-top"><div class="lobby-grid"></div><div class="lobby-preview"></div></div>
         <div class="lobby-seats"></div>
         <div class="lobby-footer"></div>
@@ -179,7 +179,7 @@ export class Lobby {
       if (!s) {
         el.className = 'lobby-seat empty';
         el.innerHTML = `<div class="seat-head"><b>P${i + 1}</b> press to join</div>
-          <div class="seat-join">Gamepad: <kbd>A</kbd><br>Keyboard left side: <kbd>Space</kbd><br>Keyboard arrow side: <kbd>Enter</kbd></div>`;
+          <div class="seat-join">W A S D player: <kbd>Space</kbd><br>I J K L player: <kbd>;</kbd><br>Gamepad: <kbd>A</kbd></div>`;
         return;
       }
       const c = getCharacter(CHARACTERS[s.cursor].id);

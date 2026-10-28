@@ -9,12 +9,17 @@ describe('party input assignment', () => {
     const both = m('kb-left', 'kb-right');
     expect(inputOptionsFor('kb-left', both)).toEqual({ keys: KEYS_LEFT, pad: null });
     expect(inputOptionsFor('kb-right', both)).toEqual({ keys: KEYS_RIGHT, pad: null });
-    const alone = m('kb-right', 'pad-0');
-    expect(inputOptionsFor('kb-right', alone)).toEqual({ keys: DEFAULT_KEYS, pad: null });
+    // Alone on the keyboard you get the whole solo layout, plus I J K L if you joined from that side.
+    expect(inputOptionsFor('kb-left', m('kb-left', 'pad-0'))).toEqual({ keys: DEFAULT_KEYS, pad: null });
+    const solo = inputOptionsFor('kb-right', m('kb-right', 'pad-0')).keys!;
+    expect(solo.throttle).toEqual(['ArrowUp', 'KeyW', 'KeyI']);
+    expect(solo.drift).toEqual(['Space', 'Semicolon']);
+    const codes = Object.values(solo).flat();
+    expect(new Set(codes).size).toBe(codes.length);
   });
 
   it('gives each gamepad its own index and no keys', () => {
-    const party = m('pad-0', 'pad-2', 'kb-left');
+    const party = m('pad-0', 'pad-2');
     expect(inputOptionsFor('pad-0', party)).toEqual({ keys: null, pad: 0 });
     expect(inputOptionsFor('pad-2', party)).toEqual({ keys: null, pad: 2 });
   });
@@ -30,8 +35,9 @@ describe('party input assignment', () => {
     const left = controlsFor('kb-left', both);
     expect(left.find((r) => r.action === 'Drift / hop')!.keys).toBe('Space');
     const right = controlsFor('kb-right', both);
-    expect(right.find((r) => r.action === 'Accelerate')!.keys).toBe('↑');
-    expect(right.find((r) => r.action === 'Drift / hop')!.keys).toBe('Right Shift');
+    expect(right.find((r) => r.action === 'Steer')!.keys).toBe('J L');
+    expect(right.find((r) => r.action === 'Accelerate')!.keys).toBe('I');
+    expect(right.find((r) => r.action === 'Drift / hop')!.keys).toBe('; or Right Shift');
     expect(controlsFor('pad-1', both).find((r) => r.action === 'Accelerate')!.keys).toBe('A');
   });
 });
@@ -40,20 +46,5 @@ describe('viewport layout', () => {
   it('splits 2 players top/bottom or side by side', () => {
     expect(viewportRects(2)).toEqual([{ x: 0, y: 0, w: 1, h: 0.5 }, { x: 0, y: 0.5, w: 1, h: 0.5 }]);
     expect(viewportRects(2, true)).toEqual([{ x: 0, y: 0, w: 0.5, h: 1 }, { x: 0.5, y: 0, w: 0.5, h: 1 }]);
-  });
-
-  it('uses quarters for 3 and 4 players without overlap', () => {
-    for (const n of [3, 4]) {
-      const r = viewportRects(n);
-      expect(r.length).toBe(n);
-      const area = r.reduce((a, q) => a + q.w * q.h, 0);
-      expect(area).toBeCloseTo(n * 0.25);
-      for (let i = 0; i < r.length; i++)
-        for (let j = i + 1; j < r.length; j++) {
-          const a = r[i], b = r[j];
-          const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-          expect(overlap).toBe(false);
-        }
-    }
   });
 });

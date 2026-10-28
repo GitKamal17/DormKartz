@@ -8,8 +8,10 @@
 import type { KartState, PlayerId, RaceConfig, RaceEvent, RaceState, SpeedClass } from '../sim/types';
 
 /** Bumped whenever the messages or the simulation change incompatibly. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_PLAYERS = 8;
+/** Players sharing one device (split screen: W A S D + I J K L). */
+export const MAX_LOCAL = 2;
 /** The server sends a snapshot every this many ticks (30 Hz). */
 export const SNAPSHOT_EVERY = 2;
 export const CODE_LENGTH = 4;
@@ -53,14 +55,20 @@ export type ClientMessage =
   | { type: 'join'; v: number; code: string; name: string }
   | { type: 'rejoin'; v: number; code: string; token: string }
   | { type: 'leave' }
-  | { type: 'pick'; characterId: string }
+  /** Adds a second player on this device (split screen). */
+  | { type: 'add'; name: string }
+  /** Removes one of this device's players (not the last; use leave for that). */
+  | { type: 'drop'; id: PlayerId }
+  /** `id` picks which of this device's players; the first by default. */
+  | { type: 'pick'; characterId: string; id?: PlayerId }
   | { type: 'settings'; settings: Partial<RoomSettings> }
   | { type: 'start' }
-  /** Sent every tick: `s` counts up by one per tick, `i` is one packed input per player on this device. */
+  /** Sent every tick: `s` counts up by one per tick, `i` is one packed input per player on this device, in `you` order. */
   | { type: 'input'; s: number; i: number[] };
 
 export type ServerMessage =
-  | { type: 'joined'; you: PlayerId; token: string; room: RoomInfo }
+  /** `you` lists this device's players (P1 first). Sent again whenever that list changes. */
+  | { type: 'joined'; you: PlayerId[]; token: string; room: RoomInfo }
   | { type: 'room'; room: RoomInfo }
   | { type: 'error'; message: string }
   | { type: 'start'; race: RaceStart }

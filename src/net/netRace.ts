@@ -171,7 +171,13 @@ export class NetRace {
     }
     this.session.receive(later);
 
-    const me = s.acks[this.you];
+    // Our players share one input stream; trust the one acknowledged least
+    // (once a kart finishes the server acknowledges its inputs early).
+    let me: [number, number] | undefined;
+    for (const l of this.locals) {
+      const a = s.acks[l.id];
+      if (a && (!me || a[0] < me[0])) me = a;
+    }
     if (me) {
       while (this.history.length && this.history[0].s <= me[0]) this.history.shift();
       // Drift our clock so about TARGET_QUEUE inputs are waiting at the server.

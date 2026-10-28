@@ -50,7 +50,8 @@ export function serverUrl(): string {
 
 export class NetClient {
   status: NetStatus = 'idle';
-  you: PlayerId = -1;
+  /** This device's players in the room, P1 first (two for split screen). */
+  mine: PlayerId[] = [];
   room: RoomInfo | null = null;
   private ws: WebSocket | null = null;
   private token = '';
@@ -64,11 +65,11 @@ export class NetClient {
   ) {}
 
   get inRoom(): boolean {
-    return !!this.room && this.you >= 0;
+    return !!this.room && this.mine.length > 0;
   }
 
   get isHost(): boolean {
-    return this.inRoom && this.room!.hostId === this.you;
+    return this.inRoom && this.mine.includes(this.room!.hostId);
   }
 
   create(name: string): void {
@@ -93,6 +94,15 @@ export class NetClient {
     return true;
   }
 
+  /** Seats a second player on this device (split screen). */
+  addLocal(name: string): void {
+    this.send({ type: 'add', name });
+  }
+
+  dropLocal(id: PlayerId): void {
+    this.send({ type: 'drop', id });
+  }
+
   send(m: ClientMessage): void {
     const ws = this.ws;
     if (ws?.readyState !== WebSocket.OPEN) return;
@@ -115,7 +125,7 @@ export class NetClient {
       ws.close();
     }
     this.room = null;
-    this.you = -1;
+    this.mine = [];
     this.token = '';
     this.retries = 0;
     try {
@@ -175,7 +185,7 @@ export class NetClient {
       return;
     }
     if (m.type === 'joined') {
-      this.you = m.you;
+      this.mine = m.you;
       this.token = m.token;
       this.room = m.room;
       this.setStatus('open');

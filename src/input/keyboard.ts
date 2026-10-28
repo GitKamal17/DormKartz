@@ -65,18 +65,18 @@ export const KEYS_LEFT: KeyBindings = {
 };
 
 /**
- * Right half of a shared keyboard: arrows plus the keys around them (numpad too).
- * "/" comes first for items because Macs have no Right Ctrl and Ctrl+arrows
- * switches desktops there.
+ * Right half of a shared keyboard: I J K L, the mirror image of W A S D.
+ * The pinky rests on ";" for drift (Right Shift works too); U and O sit where
+ * E and Q are for the left player.
  */
 export const KEYS_RIGHT: KeyBindings = {
-  left: ['ArrowLeft', 'Numpad4'],
-  right: ['ArrowRight', 'Numpad6'],
-  throttle: ['ArrowUp', 'Numpad8'],
-  brake: ['ArrowDown', 'Numpad5', 'Numpad2'],
-  drift: ['ShiftRight', 'Numpad0'],
-  item: ['Slash', 'ControlRight', 'NumpadDecimal'],
-  lookBack: ['Period', 'Numpad1'],
+  left: ['KeyJ'],
+  right: ['KeyL'],
+  throttle: ['KeyI'],
+  brake: ['KeyK'],
+  drift: ['Semicolon', 'ShiftRight'],
+  item: ['KeyU'],
+  lookBack: ['KeyO'],
 };
 
 // Keys whose browser default must be blocked: scrolling (arrows, Space),

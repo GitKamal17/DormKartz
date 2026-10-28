@@ -13,6 +13,12 @@ export class FixedLoop {
   ticking = true;
   /** Ticks per real second, relative to 60 (online play nudges this to stay in step with the server). */
   rate = 1;
+  /**
+   * Most ticks run in one frame before the loop gives up catching up. Online
+   * play raises it: the server expects 60 inputs a second even from a device
+   * that can only draw 10 frames.
+   */
+  maxSteps = 6;
 
   constructor(
     private readonly onTick: () => void,
@@ -32,12 +38,12 @@ export class FixedLoop {
       if (this.ticking) {
         this.acc += dt * this.rate;
         let steps = 0;
-        while (this.acc >= DT && steps < 6) {
+        while (this.acc >= DT && steps < this.maxSteps) {
           this.onTick();
           this.acc -= DT;
           steps++;
         }
-        if (steps === 6) this.acc = 0;
+        if (steps === this.maxSteps) this.acc = 0;
       }
       this.onFrame(this.ticking ? this.acc / DT : 1, dt);
     };

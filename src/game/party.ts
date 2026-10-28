@@ -12,8 +12,10 @@ export interface PartyMember {
   characterId: string;
 }
 
-export const MAX_PLAYERS = 4;
-export const PLAYER_COLORS = ['#ff4d5a', '#3aa0ff', '#45d35a', '#ffc21a'];
+/** Two players share one screen; more than that is too small to race on. */
+export const MAX_PLAYERS = 2;
+/** P1, P2, then colors for other humans online. */
+export const PLAYER_COLORS = ['#ff4d5a', '#3aa0ff', '#45d35a', '#ffc21a', '#c77dff', '#ff9f43', '#2ee6d6', '#f368e0'];
 
 export { KEYS_LEFT, KEYS_RIGHT } from '../input/keyboard';
 
@@ -30,10 +32,18 @@ export function keyboardShared(members: readonly PartyMember[]): boolean {
   return members.some((m) => m.device === 'kb-left') && members.some((m) => m.device === 'kb-right');
 }
 
+/** The solo layout plus I J K L, for someone alone on the keyboard who joined from that side. */
+const SOLO_PLUS_RIGHT: KeyBindings = (() => {
+  const used = new Set(Object.values(DEFAULT_KEYS).flat());
+  const out = { ...DEFAULT_KEYS };
+  for (const k of Object.keys(out) as (keyof KeyBindings)[]) out[k] = [...DEFAULT_KEYS[k], ...KEYS_RIGHT[k].filter((c) => !used.has(c))];
+  return out;
+})();
+
 /** The key set a keyboard player actually gets (the whole keyboard if they're alone on it). */
 export function keysFor(device: DeviceId, members: readonly PartyMember[]): KeyBindings | null {
   if (isPad(device)) return null;
-  if (!keyboardShared(members)) return DEFAULT_KEYS;
+  if (!keyboardShared(members)) return device === 'kb-right' ? SOLO_PLUS_RIGHT : DEFAULT_KEYS;
   return device === 'kb-left' ? KEYS_LEFT : KEYS_RIGHT;
 }
 
@@ -44,19 +54,17 @@ export function inputOptionsFor(device: DeviceId, members: readonly PartyMember[
 
 export function deviceLabel(d: DeviceId): string {
   if (d === 'kb-left') return 'Keyboard · left side';
-  if (d === 'kb-right') return 'Keyboard · arrow side';
+  if (d === 'kb-right') return 'Keyboard · I J K L';
   return `Gamepad ${padIndex(d) + 1}`;
 }
 
 const KEY_NAMES: Record<string, string> = {
   KeyA: 'A', KeyD: 'D', KeyW: 'W', KeyS: 'S', KeyE: 'E', KeyQ: 'Q', Space: 'Space',
   ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift', ControlRight: 'Right Ctrl',
-  ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Slash: '/', Period: '.',
-  Numpad0: 'Num 0', Numpad1: 'Num 1', Numpad2: 'Num 2', Numpad4: 'Num 4', Numpad5: 'Num 5',
-  Numpad6: 'Num 6', Numpad8: 'Num 8', NumpadDecimal: 'Num .',
+  ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Semicolon: ';',
 };
 
-const keyName = (c: string) => KEY_NAMES[c] ?? c;
+const keyName = (c: string) => KEY_NAMES[c] ?? (c.startsWith('Key') ? c.slice(3) : c);
 
 export interface ControlRow {
   action: string;
@@ -78,7 +86,7 @@ export function controlsFor(device: DeviceId, members: readonly PartyMember[]): 
   }
   const k = keysFor(device, members)!;
   const first = (codes: string[]) => keyName(codes[0]);
-  const all = (codes: string[]) => codes.filter((c) => !c.startsWith('Numpad')).map(keyName).join(' or ');
+  const all = (codes: string[]) => codes.map(keyName).join(' or ');
   const steer = `${keyName(k.left[0])} ${keyName(k.right[0])}`;
   return [
     { action: 'Steer', keys: steer },
@@ -98,23 +106,10 @@ export interface Rect {
   h: number;
 }
 
-/**
- * Screen regions (normalized, origin top-left) for n players.
- * 1: full. 2: top/bottom, or left/right when sideBySide. 3-4: 2x2 grid
- * (with 3 players the bottom-right quarter is left for the map panel).
- */
+/** Screen regions (normalized, origin top-left): 1 player full screen, 2 top/bottom or side by side. */
 export function viewportRects(n: number, sideBySide = false): Rect[] {
   if (n <= 1) return [{ x: 0, y: 0, w: 1, h: 1 }];
-  if (n === 2) {
-    return sideBySide
-      ? [{ x: 0, y: 0, w: 0.5, h: 1 }, { x: 0.5, y: 0, w: 0.5, h: 1 }]
-      : [{ x: 0, y: 0, w: 1, h: 0.5 }, { x: 0, y: 0.5, w: 1, h: 0.5 }];
-  }
-  const quads = [
-    { x: 0, y: 0, w: 0.5, h: 0.5 },
-    { x: 0.5, y: 0, w: 0.5, h: 0.5 },
-    { x: 0, y: 0.5, w: 0.5, h: 0.5 },
-    { x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
-  ];
-  return quads.slice(0, Math.min(4, n));
+  return sideBySide
+    ? [{ x: 0, y: 0, w: 0.5, h: 1 }, { x: 0.5, y: 0, w: 0.5, h: 1 }]
+    : [{ x: 0, y: 0, w: 1, h: 0.5 }, { x: 0, y: 0.5, w: 1, h: 0.5 }];
 }

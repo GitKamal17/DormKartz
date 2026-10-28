@@ -13,7 +13,9 @@ const only = process.argv[2];
 
 const server = await serve('dist');
 const base = `http://127.0.0.1:${server.address().port}/index.html`;
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'];
+// Prefer Playwright's Chromium; fall back to an installed Chrome.
+const browser = await chromium.launch({ args }).catch(() => chromium.launch({ args, channel: 'chrome' }));
 const failures = [];
 
 function check(cond, msg) {
@@ -225,8 +227,8 @@ async function padTap(page, pad, button) {
 const lobby = (page) => page.evaluate(() => window.dormkartz.status().lobby ?? []);
 
 /**
- * Runs a party race. devices: which devices join, in order ('L' = keyboard left,
- * 'R' = keyboard arrows, 0/1 = gamepad index).
+ * Runs a party race. devices: which devices join, in order ('L' = keyboard W A S D,
+ * 'R' = keyboard I J K L, 0/1 = gamepad index).
  */
 async function partyRace(name, devices, { cpus = true, track = 0, shot }) {
   console.log(`party: ${name}`);
@@ -240,7 +242,7 @@ async function partyRace(name, devices, { cpus = true, track = 0, shot }) {
     await press(page, 'ArrowDown', 2); // Party Race
     await press(page, 'Enter');
     await waitScreen(page, 'lobby');
-    const confirm = async (d) => (d === 'L' ? press(page, 'Space') : d === 'R' ? press(page, 'Enter') : padTap(page, d, 0));
+    const confirm = async (d) => (d === 'L' ? press(page, 'Space') : d === 'R' ? press(page, 'Semicolon') : padTap(page, d, 0));
     for (const d of devices) await confirm(d); // join
     check((await lobby(page)).length === devices.length, `${name}: expected ${devices.length} players to join, got ${(await lobby(page)).length}`);
     for (const d of devices) await confirm(d); // lock in racer
@@ -273,7 +275,7 @@ async function partyRace(name, devices, { cpus = true, track = 0, shot }) {
     const hold = async (down) => {
       for (const d of devices) {
         if (d === 'L') await (down ? page.keyboard.down('KeyW') : page.keyboard.up('KeyW'));
-        else if (d === 'R') await (down ? page.keyboard.down('ArrowUp') : page.keyboard.up('ArrowUp'));
+        else if (d === 'R') await (down ? page.keyboard.down('KeyI') : page.keyboard.up('KeyI'));
         else await page.evaluate(([i, v]) => window.__padSet(i, 0, v), [d, down]);
       }
     };
@@ -305,8 +307,7 @@ async function partyRace(name, devices, { cpus = true, track = 0, shot }) {
 
 if (!only || only === 'party') {
   await partyRace('2 players, one keyboard, no CPUs', ['L', 'R'], { cpus: false, track: 5, shot: '2p' });
-  await partyRace('3 players', ['L', 'R', 0], { track: 3, shot: '3p' });
-  await partyRace('4 players: keyboard x2 + 2 gamepads', ['L', 'R', 0, 1], { track: 6, shot: '4p' });
+  await partyRace('2 players: keyboard + gamepad', ['R', 0], { track: 3, shot: '2p-pad' });
 }
 
 await browser.close();
