@@ -4,7 +4,7 @@
 import { AudioEngine, MENU_MUSIC } from './audio/audio';
 import { FixedLoop } from './game/loop';
 import { GrandPrix, type Racer } from './game/grandPrix';
-import { loadGhost, loadRecord, packInput, quantize, saveGhost, saveRecord } from './game/ghost';
+import { loadGhost, loadRecord, saveGhost, saveRecord } from './game/ghost';
 import { controlsFor, deviceLabel, inputOptionsFor, isPad, padIndex, PLAYER_COLORS, viewportRects, type DeviceId, type PartyMember } from './game/party';
 import { RaceSession, type GameMode, type PlayerSlot } from './game/session';
 import { loadSettings, saveSettings, type Settings } from './game/settings';
@@ -16,7 +16,7 @@ import { installKeyboard } from './input/keyboard';
 import { LocalInput } from './input/local';
 import { MenuInput, type MenuAction } from './input/menuInput';
 import { TouchControls, TouchInput, touchDevice } from './input/touch';
-import { blankInput, type InputSource } from './input/types';
+import type { InputSource } from './input/types';
 import { NetClient, type NetStatus } from './net/client';
 import { NetRace } from './net/netRace';
 import { CODE_LENGTH, normalizeCode, type RaceStart, type ServerMessage } from './net/protocol';
@@ -103,7 +103,6 @@ export class App {
   /** In the online menus/room (pickers send choices to the room instead of starting races). */
   private online = false;
   private onlineMessage = '';
-  private readonly netInput = blankInput();
   private readonly banner: HTMLDivElement;
   private bannerTimer = 0;
 
@@ -143,10 +142,6 @@ export class App {
     this.menuInput.on((a, source) => this.onMenuAction(a, source));
     this.devices = new DeviceInput();
     this.devices.on((d, a) => this.lobby?.handle(d, a));
-    // A backgrounded phone stops sending input; let go of everything first.
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.netRace) this.net.sendInput(packInput(blankInput()), performance.now());
-    });
     window.addEventListener('pointerdown', (e) => {
       this.audio.unlock();
       if (e.pointerType === 'touch') this.enterTouchMode();
@@ -159,7 +154,7 @@ export class App {
     this.settings = loadSettings();
     this.applySettings();
     this.loop = new FixedLoop(
-      () => (this.netRace ? this.sendNetInput() : this.session?.tick()),
+      () => (this.netRace ? this.netTick() : this.session?.tick()),
       (alpha, dt) => this.frame(alpha, dt),
     );
   }
@@ -184,10 +179,9 @@ export class App {
     if (this.lobby) this.devices.poll(now);
     else this.menuInput.pollGamepad(now);
     const s = this.session;
-    let simTime: number | undefined;
     if (this.netRace) {
-      alpha = this.netRace.update(now, dt);
-      simTime = this.netRace.time;
+      this.netRace.frame(dt);
+      this.loop.rate = this.netRace.rate;
     }
     // Touch controls while racing; once you finish a CPU drives you home, so they go away.
     this.touch.show(this.touchMode && !!s && !this.attract && !this.resultsShown && !this.menu.visible && this.humans.some((h) => !s.kart(h.id).finished));
@@ -210,7 +204,7 @@ export class App {
           this.audio.updateEngine(h.id, s.kart(h.id), s.lastInput.get(h.id)?.throttle ?? 0, !this.paused);
         }
       }
-      this.renderer.render(alpha, dt, simTime);
+      this.renderer.render(alpha, dt);
       if (!this.attract) {
         this.renderer.viewports.forEach((vp, i) => {
           const g = s.ghost?.active ? s.ghost.state!.karts[0] : null;
@@ -289,6 +283,7 @@ export class App {
     this.renderer.unload();
     this.session = null;
     this.netRace = null;
+    this.loop.rate = 1;
     this.humans = [];
     this.paused = false;
     this.resultsShown = false;
@@ -860,12 +855,9 @@ export class App {
     this.showBanner('');
   }
 
-  private sendNetInput(): void {
-    const nr = this.netRace!;
-    const s = nr.session;
-    const q = quantize(nr.input.poll({ state: s.state, track: s.track }, nr.you), this.netInput);
-    s.lastInput.set(nr.you, q);
-    this.net.sendInput(packInput(this.paused ? blankInput() : q), performance.now());
+  private netTick(): void {
+    const sent = this.netRace!.tick(this.paused);
+    if (sent) this.net.send({ type: 'input', s: sent.s, i: sent.i });
   }
 
   private onNetStatus(st: NetStatus): void {
@@ -886,7 +878,7 @@ export class App {
         this.startOnlineRace(m.race);
         break;
       case 'snap':
-        this.netRace?.push(m.s, performance.now());
+        this.netRace?.onSnapshot(m.s);
         break;
       case 'end':
         if (this.netRace && !this.resultsShown) {
@@ -1034,7 +1026,7 @@ export class App {
     this.attract = false;
     this.mode = 'single';
     const input: InputSource = AUTOPILOT ? new AIInput(0.95, `autopilot-${you}`) : new TouchInput(this.touch);
-    const nr = new NetRace(start, you, input);
+    const nr = new NetRace(start, [{ id: you, input }]);
     this.netRace = nr;
     this.session = nr.session;
     this.trackId = start.config.trackId;
@@ -1168,7 +1160,7 @@ export class App {
     const players = racing
       ? this.humans.map((h) => {
           const k = s!.kart(h.id);
-          return { id: h.id, lap: k.lap, s: k.s, place: k.place, speed: Math.hypot(k.vx, k.vz), finished: k.finished, fallTicks: k.fallTicks, characterId: k.characterId };
+          return { id: h.id, lap: k.lap, s: k.s, heading: k.heading, place: k.place, speed: Math.hypot(k.vx, k.vz), finished: k.finished, fallTicks: k.fallTicks, characterId: k.characterId };
         })
       : [];
     return {
@@ -1183,7 +1175,7 @@ export class App {
       lobby: this.lobby ? this.lobby.seats.map((x) => ({ device: x.device, ready: x.ready, characterId: CHARACTERS[x.cursor].id })) : null,
       player: players[0] ?? null,
       players,
-      online: { status: this.net.status, code: this.net.room?.code ?? null, you: this.net.you, host: this.net.isHost, players: this.net.room?.players.length ?? 0, racing: !!this.netRace },
+      online: { status: this.net.status, code: this.net.room?.code ?? null, you: this.net.you, host: this.net.isHost, players: this.net.room?.players.length ?? 0, racing: !!this.netRace, rate: this.loop.rate, correction: this.netRace?.lastCorrection.get(this.netRace.you) ?? null },
       touch: this.touchMode,
     };
   }

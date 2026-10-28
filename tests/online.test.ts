@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { RoomServer } from '../server/rooms';
 import { packInput } from '../src/game/ghost';
+import { AIInput } from '../src/input/ai';
+import { NetRace } from '../src/net/netRace';
 import { applySnapshot, PROTOCOL_VERSION, type ServerMessage } from '../src/net/protocol';
 import { createRace } from '../src/sim/race';
 import { TICK_RATE } from '../src/sim/config';
@@ -49,7 +51,7 @@ describe('online rooms', () => {
     // The client rebuilds the same race and applies snapshots on top of it.
     const local = createRace(start.race.config, start.race.seed);
     for (let i = 0; i < 5 * TICK_RATE; i++) {
-      friend.send({ type: 'input', i: packInput({ steer: 0, throttle: 1, brake: 0, drift: false, useItem: false, lookBack: false }) });
+      friend.send({ type: 'input', s: i + 1, i: [packInput({ steer: 0, throttle: 1, brake: 0, drift: false, useItem: false, lookBack: false })] });
       server.advance();
     }
     const snap = friend.last('snap')!;
@@ -95,5 +97,61 @@ describe('online rooms', () => {
     expect(server.rooms.size).toBe(1);
     a.send({ type: 'leave' });
     expect(server.rooms.size).toBe(0);
+  });
+});
+
+describe('online prediction', () => {
+  /** A client racing with an AI at the wheel over a connection with `delay` ticks each way. */
+  function race(delay: number, seconds: number, cpus = true) {
+    const server = new RoomServer();
+    const toServer: { at: number; data: string }[] = [];
+    const toClient: { at: number; data: string }[] = [];
+    let now = 0;
+    const host = client(server);
+    host.send({ type: 'create', v: PROTOCOL_VERSION, name: 'Host' });
+    const code = host.last('joined')!.room.code;
+    const conn = server.connect({ send: (d) => toClient.push({ at: now + delay, data: d }), close: () => {} });
+    conn.message(JSON.stringify({ type: 'join', v: PROTOCOL_VERSION, code, name: 'Phone' }));
+    host.send({ type: 'settings', settings: { cpus } });
+    host.send({ type: 'start' });
+    let nr: NetRace | null = null;
+    const corrections: number[] = [];
+    let you = -1;
+    for (now = 0; now < seconds * TICK_RATE; now++) {
+      while (toServer.length && toServer[0].at <= now) conn.message(toServer.shift()!.data);
+      server.advance();
+      while (toClient.length && toClient[0].at <= now) {
+        const m = JSON.parse(toClient.shift()!.data) as ServerMessage;
+        if (m.type === 'joined') you = m.you;
+        if (m.type === 'start') nr = new NetRace(m.race, [{ id: you, input: new AIInput(0.95, 'phone') }]);
+        if (m.type === 'snap' && nr) {
+          nr.onSnapshot(m.s);
+          if (m.s.tick > 5 * TICK_RATE) corrections.push(nr.lastCorrection.get(you) ?? 0);
+        }
+      }
+      const sent = nr?.tick();
+      if (sent) toServer.push({ at: now + delay, data: JSON.stringify({ type: 'input', ...sent }) });
+    }
+    const server_kart = server.rooms.get(code)!.race!.session.kart(you);
+    corrections.sort((a, b) => a - b);
+    const avg = corrections.reduce((a, b) => a + b, 0) / corrections.length;
+    return { med: corrections[corrections.length >> 1], avg, p95: corrections[Math.floor(corrections.length * 0.95)], lap: server_kart.lap, speed: Math.hypot(server_kart.vx, server_kart.vz) };
+  }
+
+  it('replays your inputs exactly, so your kart never rubber-bands on its own', () => {
+    for (const delay of [3, 9, 15]) {
+      const r = race(delay, 40, false);
+      expect(r.lap).toBeGreaterThanOrEqual(1);
+      // Only snapshot rounding is left (millimeters), even at a 500 ms round trip.
+      expect(r.p95, `delay ${delay}`).toBeLessThan(0.05);
+    }
+  });
+
+  it('keeps your kart exactly where the server has it in a full field over a 200 ms round trip', () => {
+    const r = race(6, 40);
+    expect(r.lap).toBeGreaterThanOrEqual(1);
+    // Usually spot on; only bumps with CPUs (whose moves can't be known ahead) cause corrections.
+    expect(r.med).toBeLessThan(0.02);
+    expect(r.avg).toBeLessThan(0.5);
   });
 });

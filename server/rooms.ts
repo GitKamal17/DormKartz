@@ -41,12 +41,61 @@ const MAX_ROOMS = 500;
 /** CPU kart ids start here so they never collide with player ids. */
 const CPU_ID_BASE = 100;
 
-/** A human on another device: whatever they last sent. */
+const NEUTRAL_PACKED = packInput(NEUTRAL_INPUT);
+/** Inputs waiting beyond this are dropped (the device will be told to slow down). */
+const MAX_QUEUE = 8;
+/** No input for this long (tab hidden, signal lost): let go of everything. */
+const STARVE_TICKS = 15;
+
+/**
+ * A human on another device. They send one numbered input per tick; we use
+ * one per tick in order, so their device can replay exactly what we haven't
+ * applied yet. A short queue absorbs network jitter; if it runs dry the last
+ * input is repeated.
+ */
 class RemoteInput implements InputSource {
   readonly kind = 'remote' as const;
-  packed = packInput(NEUTRAL_INPUT);
+  /** [seq, packed], oldest first. */
+  private readonly queue: [number, number][] = [];
+  private packed = NEUTRAL_PACKED;
+  private lastSeq = -1;
+  private starved = 0;
+  /** Seq of the last input applied to the race. */
+  ack = -1;
   private readonly out = blankInput();
+
+  push(seq: number, packed: number): void {
+    if (seq <= this.lastSeq) return;
+    this.lastSeq = seq;
+    // Re-quantize so a hostile client can't send out-of-range values.
+    this.queue.push([seq, packInput(unpackInput(packed, this.out))]);
+    if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
+  }
+
+  get queued(): number {
+    return this.queue.length;
+  }
+
+  /** Marks everything received as applied (a CPU is driving this kart now). */
+  drain(): void {
+    if (this.queue.length) this.ack = this.queue[this.queue.length - 1][0];
+    this.queue.length = 0;
+  }
+
+  reset(): void {
+    this.queue.length = 0;
+    this.lastSeq = -1;
+    this.ack = -1;
+    this.starved = 0;
+    this.packed = NEUTRAL_PACKED;
+  }
+
   poll(): FrameInput {
+    const next = this.queue.shift();
+    if (next) {
+      [this.ack, this.packed] = next;
+      this.starved = 0;
+    } else if (++this.starved > STARVE_TICKS) this.packed = NEUTRAL_PACKED;
     return unpackInput(this.packed, this.out);
   }
 }
@@ -193,7 +242,7 @@ export class Room {
     const session = new RaceSession({ trackId: this.settings.trackId, speedClass: this.settings.cc, mode: 'single', slots: [...cpus, ...people], seed });
     for (const p2 of this.players) {
       p2.racing = humans.includes(p2);
-      p2.input.packed = packInput(NEUTRAL_INPUT);
+      p2.input.reset();
     }
     this.race = { id: ++this.races, session, events: [], endAt: -1, ai: new Map() };
     this.broadcast({ type: 'start', race: this.raceStart() });
@@ -210,7 +259,11 @@ export class Room {
 
   private snapshot(): void {
     const r = this.race!;
-    const data = encode({ type: 'snap', s: makeSnapshot(r.session.state, r.events) });
+    const s = r.session;
+    const inputs = s.state.karts.map((k) => packInput(s.inputs.get(k.id) ?? NEUTRAL_INPUT));
+    const acks: Record<PlayerId, [number, number]> = {};
+    for (const p of this.players) if (p.racing) acks[p.id] = [p.input.ack, p.input.queued];
+    const data = encode({ type: 'snap', s: makeSnapshot(s.state, r.events, inputs, acks) });
     r.events = [];
     for (const p of this.players) if (p.racing) send(p, data);
   }
@@ -220,6 +273,8 @@ export class Room {
     const r = this.race;
     if (!r) return;
     const s = r.session;
+    // Once a kart finishes a CPU drives it; keep acknowledging what its player sends.
+    for (const p of this.players) if (p.racing && s.kart(p.id).finished) p.input.drain();
     s.tick();
     for (const e of s.drainEvents()) r.events.push(e);
     if (s.state.tick % SNAPSHOT_EVERY === 0) this.snapshot();
@@ -285,10 +340,7 @@ class Client {
     let err: string | null = null;
     switch (msg.type) {
       case 'input':
-        if (typeof msg.i === 'number' && Number.isFinite(msg.i)) {
-          // Re-quantize so a hostile client can't send out-of-range values.
-          p.input.packed = packInput(unpackInput(msg.i, blankInput()));
-        }
+        if (Number.isInteger(msg.s) && Array.isArray(msg.i) && Number.isInteger(msg.i[0]) && msg.i[0] >= 0) p.input.push(msg.s, msg.i[0]);
         return;
       case 'pick':
         err = room.pick(p, String(msg.characterId));
@@ -387,6 +439,8 @@ export class RoomServer {
     }
     p.conn = c.conn;
     p.droppedAt = -1;
+    // A reloaded page numbers its inputs from scratch.
+    p.input.reset();
     this.seat(c, room, p);
     const r = room.race;
     if (r && p.racing) {

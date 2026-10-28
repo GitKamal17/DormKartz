@@ -47,9 +47,11 @@ That's enough for everyone on the same Wi-Fi: open `http://<your-computer's-ip>:
 
 **Render (free, no credit card):** push this repo to GitHub, then on [render.com](https://render.com) choose **New → Blueprint** and pick the repo. `render.yaml` sets everything up. You get an `https://….onrender.com` address to share. Free servers go to sleep after 15 minutes without visitors; the first visit after that takes about a minute to wake it up.
 
+**Pick the server region closest to the players** (Render: Oregon, Ohio, Virginia, Frankfurt or Singapore; it can only be chosen when the service is created). Your own kart reacts instantly wherever the server is, but bumps and items from other players are settled by the server, so a server across the world makes those land late.
+
 **Anywhere that runs Docker** (Fly.io, Railway, a VPS): the `Dockerfile` builds and runs the whole thing on port 8787.
 
-To develop online play with hot reload, run `npm run server` in one terminal and `npm run dev` in another; the dev server forwards `/ws` to the game server. A page served from somewhere else can point at a server with `?server=wss://your-server`.
+To develop online play with hot reload, run `npm run server` in one terminal and `npm run dev` in another; the dev server forwards `/ws` to the game server. A page served from somewhere else can point at a server with `?server=wss://your-server`. Add `?lag=250&jitter=30` to try a bad connection (250 ms round trip plus up to 30 ms of jitter each way).
 
 ## Controls (solo)
 
@@ -216,10 +218,12 @@ Party mode uses exactly the pieces above, with no special cases in the simulatio
 It's **server-authoritative**, not peer-to-peer lockstep: floating-point results can differ between browsers and CPUs, so "same inputs → same state" only holds on one machine and engine.
 
 - `server/rooms.ts` runs the same `RaceSession` the offline game uses. Each remote human is a `remote` slot whose `InputSource` is just the last packed `FrameInput` that device sent (the same 32-bit packing ghosts use). A dropped player's slot is switched to an `AIInput` until they reconnect.
-- The server steps every room at 60 Hz and sends a snapshot every 2 ticks (30 Hz): the `RaceState` minus config and RNG, karts as value arrays, numbers rounded, plus every event since the last snapshot. With WebSocket compression that's a few dozen KB/s per player.
-- `src/net/netRace.ts` keeps a short buffer and draws about 100 ms behind the newest snapshot, interpolating between the two that bracket that time. Rendering, HUD and audio don't know the race is remote: they read a `RaceSession` like always.
-- Clients send input when it changes (and a few times a second anyway). There is no client-side prediction yet, so your own kart reacts after one round trip plus the interpolation delay.
-- `tests/online.test.ts` drives the room server with fake connections: create, join by code, race, drop and rejoin, results.
+- **Inputs are numbered.** Each device sends one input per tick with a sequence number. The server keeps a short queue per player and applies exactly one per tick, in order, so it can tell the device which inputs it has applied. If the queue runs dry it repeats the last input (and lets go after a quarter second, e.g. when a phone locks).
+- The server steps every room at 60 Hz and sends a snapshot every 2 ticks (30 Hz): the full `RaceState` except config, karts as value arrays with numbers rounded, every event since the last snapshot, the input each kart used, and per player the last input seq applied plus how many are still queued. With WebSocket compression that's a few dozen KB/s per player.
+- **The device predicts.** `src/net/netRace.ts` runs the same `step()` locally, so your kart reacts on the next tick no matter the ping. Other karts carry on with the last inputs the server reported for them. On each snapshot it rewinds to the server's state, replays your inputs the server hasn't applied yet, and blends any difference over ~0.1 s. Replaying your own inputs is exact to the millimeter; the only corrections come from things it couldn't know yet (another kart bumping you, an item hitting you).
+- **Clock sync:** the device runs its local clock up to 3% fast or slow to keep about two inputs waiting at the server: enough to ride out jitter, few enough to stay responsive.
+- Rendering, HUD and audio don't know the race is remote: they read a `RaceSession` like always. Your own events (drift sparks, boosts, laps) come from the prediction so they're instant; everyone else's come from the server.
+- `tests/online.test.ts` drives the room server with fake connections (create, join, race, drop and rejoin, results) and races a predicting client over simulated 50–500 ms connections. `npm run test:online` does it for real: the game server plus an emulated Android phone in headless Chrome on a slow connection, timing how fast its kart reacts to a steering touch.
 
 ## Adding a track
 
@@ -253,6 +257,7 @@ Nothing in the renderer needs to change; the road, walls, terrain, props and min
 | `npm run build` | typecheck + production build to `dist/`, plus the server bundle in `dist-server/` |
 | `npm start` | run the online server (game + rooms) on port 8787 |
 | `npm run server` | rebuild the server bundle, then run it |
+| `npm run test:online` | build, then an end-to-end online race: real server + emulated phone in headless Chrome over a 250 ms connection (`LAG=400` to change it) |
 | `npm run typecheck` | TypeScript only |
 | `npm test` | Vitest: sim unit tests, determinism, ghost replay, every-track CPU races |
 | `npm run test:e2e` | build, then Playwright smoke test: menus → race on each track, pause, time trial, and party races with 2, 3 and 4 players (gamepads are simulated). Needs `npx playwright install chromium` the first time. Screenshots go to `e2e/screenshots/` |
@@ -270,7 +275,7 @@ These are honest gaps, not polish items:
 - **Performance on real hardware is unmeasured.** It was only run in a headless browser with a software GPU, which is much slower than any real graphics card. The scene is built to be cheap (instanced props, merged track meshes, no real-time shadows, pooled particles), but check the FPS counter in Settings on the actual laptop. If it struggles, lower the pixel ratio in `src/render/renderer.ts`.
 - **CPU drivers are competent but simple.** They follow a precomputed racing line, drift on long corners, dodge hazards and use items with basic rules. They don't plan overtakes.
 - **Music is procedural and basic:** generated chord loops per track, not composed songs.
-- **Online has no prediction for your own kart.** Steering reacts after your ping plus ~100 ms. On the same Wi-Fi that's barely noticeable; over mobile data to a far-away server it feels a bit floaty. Host the server near the players.
+- **Online: other players are predicted, not known.** Your kart is instant, but someone else's sudden swerve, bump or item reaches you a round trip later and gets blended in. With a high ping you'll see the occasional small slide when two karts touch.
 - **Online is single races only** (no online Grand Prix yet), and there's no chat or spectating; someone who joins mid-race waits in the room for the next one.
 - **Touch controls haven't been tried on a real phone yet**, only in a phone-sized emulated browser. Expect to adjust button sizes and steering sensitivity (`src/input/touch.ts`, `.tc-*` in `src/style.css`).
 - **No battle mode or track editor yet.**

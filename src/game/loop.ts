@@ -11,6 +11,8 @@ export class FixedLoop {
   running = false;
   /** When false, rendering continues but the simulation does not advance. */
   ticking = true;
+  /** Ticks per real second, relative to 60 (online play nudges this to stay in step with the server). */
+  rate = 1;
 
   constructor(
     private readonly onTick: () => void,
@@ -28,7 +30,7 @@ export class FixedLoop {
       const dt = Math.min(0.25, (now - this.last) / 1000);
       this.last = now;
       if (this.ticking) {
-        this.acc += dt;
+        this.acc += dt * this.rate;
         let steps = 0;
         while (this.acc >= DT && steps < 6) {
           this.onTick();

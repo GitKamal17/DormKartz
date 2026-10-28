@@ -49,7 +49,8 @@ export class RaceSession {
   readonly ghost: GhostRunner | null;
   readonly recorder: GhostRecorder | null;
   private readonly pending: RaceEvent[] = [];
-  private readonly inputs = new Map<PlayerId, FrameInput>();
+  /** The (quantized) input each kart used on the latest tick. */
+  readonly inputs = new Map<PlayerId, FrameInput>();
   private readonly quantized = new Map<PlayerId, FrameInput>();
   private readonly takeover = new Map<PlayerId, AIInput>();
   /** Last input fed to each local player's kart (for audio/visual cues). */

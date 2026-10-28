@@ -7,6 +7,35 @@ import { encode, PROTOCOL_VERSION, type ClientMessage, type RoomInfo, type Serve
 
 const SEAT_KEY = 'dormkartz.seat';
 
+/**
+ * Dev flag: `?lag=200` adds 200 ms of round trip (and `&jitter=40` up to 40 ms
+ * extra each way) to see how online play feels on a bad connection.
+ */
+class FakeLag {
+  private readonly half: number;
+  private readonly jitter: number;
+  private lastOut = 0;
+  private lastIn = 0;
+
+  constructor(params: URLSearchParams) {
+    this.half = Math.max(0, Number(params.get('lag')) || 0) / 2;
+    this.jitter = Math.max(0, Number(params.get('jitter')) || 0);
+  }
+
+  get on(): boolean {
+    return this.half > 0 || this.jitter > 0;
+  }
+
+  /** Delays `fn`, never reordering messages going the same way (like TCP). */
+  delay(dir: 'out' | 'in', fn: () => void): void {
+    const now = performance.now();
+    const at = Math.max(dir === 'out' ? this.lastOut : this.lastIn, now + this.half + Math.random() * this.jitter);
+    if (dir === 'out') this.lastOut = at;
+    else this.lastIn = at;
+    setTimeout(fn, at - now);
+  }
+}
+
 export type NetStatus = 'idle' | 'connecting' | 'open' | 'reconnecting';
 
 /** `?server=wss://host` or VITE_SERVER_URL point at a separate server; by default it's the page's own host. */
@@ -27,8 +56,7 @@ export class NetClient {
   private token = '';
   private retries = 0;
   private retryTimer = 0;
-  private lastInput = -1;
-  private lastInputAt = 0;
+  private readonly lag = new FakeLag(new URLSearchParams(location.search));
 
   constructor(
     private readonly onMessage: (m: ServerMessage) => void,
@@ -66,15 +94,11 @@ export class NetClient {
   }
 
   send(m: ClientMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encode(m));
-  }
-
-  /** Sends the packed input when it changes, and a few times a second regardless. */
-  sendInput(packed: number, now: number): void {
-    if (packed === this.lastInput && now - this.lastInputAt < 200) return;
-    this.lastInput = packed;
-    this.lastInputAt = now;
-    this.send({ type: 'input', i: packed });
+    const ws = this.ws;
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    const data = encode(m);
+    if (this.lag.on) this.lag.delay('out', () => ws.readyState === WebSocket.OPEN && ws.send(data));
+    else ws.send(data);
   }
 
   leave(): void {
@@ -129,32 +153,11 @@ export class NetClient {
     this.ws = ws;
     ws.onopen = () => {
       this.retries = 0;
-      this.lastInput = -1;
       ws.send(encode(first));
     };
     ws.onmessage = (e) => {
-      let m: ServerMessage;
-      try {
-        m = JSON.parse(String(e.data));
-      } catch {
-        return;
-      }
-      if (m.type === 'joined') {
-        this.you = m.you;
-        this.token = m.token;
-        this.room = m.room;
-        this.setStatus('open');
-        try {
-          sessionStorage.setItem(SEAT_KEY, JSON.stringify({ code: m.room.code, token: m.token }));
-        } catch {
-          // Ignored: reloading the page will just need the code again.
-        }
-      } else if (m.type === 'room') this.room = m.room;
-      else if (m.type === 'error' && first.type === 'rejoin' && !this.inRoomConfirmed()) {
-        // The room is gone; stop trying.
-        this.reset();
-      }
-      this.onMessage(m);
+      if (this.lag.on) this.lag.delay('in', () => this.ws === ws && this.receive(String(e.data), first));
+      else this.receive(String(e.data), first);
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -162,6 +165,31 @@ export class NetClient {
       if (this.token && this.room) this.retry();
       else this.fail();
     };
+  }
+
+  private receive(data: string, first: ClientMessage): void {
+    let m: ServerMessage;
+    try {
+      m = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (m.type === 'joined') {
+      this.you = m.you;
+      this.token = m.token;
+      this.room = m.room;
+      this.setStatus('open');
+      try {
+        sessionStorage.setItem(SEAT_KEY, JSON.stringify({ code: m.room.code, token: m.token }));
+      } catch {
+        // Ignored: reloading the page will just need the code again.
+      }
+    } else if (m.type === 'room') this.room = m.room;
+    else if (m.type === 'error' && first.type === 'rejoin' && !this.inRoomConfirmed()) {
+      // The room is gone; stop trying.
+      this.reset();
+    }
+    this.onMessage(m);
   }
 
   private inRoomConfirmed(): boolean {

@@ -1,13 +1,14 @@
 // Online play wire format, shared by the browser client and the Node server.
 //
 // The server is authoritative: it runs the same RaceSession the offline game
-// uses, takes each player's packed FrameInput, and broadcasts state snapshots
-// that clients interpolate. Messages are JSON over one WebSocket.
+// uses, takes each player's numbered, packed FrameInputs, and broadcasts full
+// state snapshots. Clients predict ahead of the server and use each snapshot
+// to correct themselves (see netRace.ts). Messages are JSON over one WebSocket.
 
 import type { KartState, PlayerId, RaceConfig, RaceEvent, RaceState, SpeedClass } from '../sim/types';
 
 /** Bumped whenever the messages or the simulation change incompatibly. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const MAX_PLAYERS = 8;
 /** The server sends a snapshot every this many ticks (30 Hz). */
 export const SNAPSHOT_EVERY = 2;
@@ -55,7 +56,8 @@ export type ClientMessage =
   | { type: 'pick'; characterId: string }
   | { type: 'settings'; settings: Partial<RoomSettings> }
   | { type: 'start' }
-  | { type: 'input'; i: number };
+  /** Sent every tick: `s` counts up by one per tick, `i` is one packed input per player on this device. */
+  | { type: 'input'; s: number; i: number[] };
 
 export type ServerMessage =
   | { type: 'joined'; you: PlayerId; token: string; room: RoomInfo }
@@ -65,12 +67,14 @@ export type ServerMessage =
   | { type: 'snap'; s: Snapshot }
   | { type: 'end'; order: PlayerId[] };
 
-/** RaceState minus what never changes (config) or the client doesn't need (rng). */
+/** Everything in RaceState except config (sent once) and events (listed separately). */
 export interface Snapshot {
   tick: number;
   phase: RaceState['phase'];
   countdown: number;
   goTick: number;
+  rng: number;
+  nextEntityId: number;
   /** Each kart's values in `kartKeys()` order. */
   karts: unknown[][];
   boxes: number[];
@@ -79,6 +83,10 @@ export interface Snapshot {
   finishOrder: PlayerId[];
   /** Every event since the previous snapshot. */
   events: RaceEvent[];
+  /** The packed input each kart used on this tick, in kart order. */
+  inputs: number[];
+  /** Per remote human: [last input seq applied, inputs still queued at the server]. */
+  acks: Record<PlayerId, [number, number]>;
 }
 
 let keys: (keyof KartState)[] | null = null;
@@ -89,19 +97,23 @@ function kartKeys(sample: KartState): (keyof KartState)[] {
   return keys;
 }
 
-export function makeSnapshot(st: RaceState, events: RaceEvent[]): Snapshot {
+export function makeSnapshot(st: RaceState, events: RaceEvent[], inputs: number[], acks: Snapshot['acks']): Snapshot {
   const ks = kartKeys(st.karts[0]);
   return {
     tick: st.tick,
     phase: st.phase,
     countdown: st.countdown,
     goTick: st.goTick,
+    rng: st.rng,
+    nextEntityId: st.nextEntityId,
     karts: st.karts.map((k) => ks.map((key) => k[key])),
     boxes: st.boxes,
     projectiles: st.projectiles,
     peels: st.peels,
     finishOrder: st.finishOrder,
     events,
+    inputs,
+    acks,
   };
 }
 
@@ -112,6 +124,8 @@ export function applySnapshot(st: RaceState, s: Snapshot): void {
   st.phase = s.phase;
   st.countdown = s.countdown;
   st.goTick = s.goTick;
+  st.rng = s.rng;
+  st.nextEntityId = s.nextEntityId;
   s.karts.forEach((vals, i) => {
     const k = st.karts[i] as unknown as Record<string, unknown>;
     ks.forEach((key, j) => (k[key] = vals[j]));

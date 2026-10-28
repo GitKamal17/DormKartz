@@ -231,10 +231,15 @@ export class GameRenderer {
   private readonly shadowGeo = new THREE.PlaneGeometry(2.6, 3.0);
   private session: RaceSession | null = null;
   private flickerT = 0;
+  /** Highest pixel ratio we render at; the actual one drops when frames run slow (phones). */
+  private readonly maxRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+  private ratio = this.maxRatio;
+  private slowTime = 0;
+  private slowFrames = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(this.ratio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.autoClear = false;
     this.shadowMat = new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false });
@@ -262,6 +267,26 @@ export class GameRenderer {
     if (session.ghost) this.ghost = new KartVisual(this.scene, session.ghost.data.characterId, this.shadowMat, this.shadowGeo, true);
     this.particles.clear();
     this.setViewports(follow, sideBySide);
+    this.slowTime = this.slowFrames = 0;
+  }
+
+  /**
+   * Lowers the resolution a step whenever a second of racing averages under
+   * 50 fps, down to 60% of normal. It doesn't climb back mid-race (that just
+   * oscillates); each race starts from the last good setting.
+   */
+  private adaptResolution(dt: number): void {
+    if (dt > 0.25) return; // tab was in the background
+    this.slowTime += dt;
+    this.slowFrames++;
+    if (this.slowTime < 1) return;
+    const fps = this.slowFrames / this.slowTime;
+    this.slowTime = this.slowFrames = 0;
+    const floor = this.maxRatio * 0.6;
+    if (fps >= 50 || this.ratio <= floor) return;
+    this.ratio = Math.max(floor, this.ratio * 0.85);
+    this.renderer.setPixelRatio(this.ratio);
+    this.resize();
   }
 
   setViewports(follow: PlayerId[], sideBySide = false): void {
@@ -331,11 +356,11 @@ export class GameRenderer {
     }
   }
 
-  /** `simTime` overrides tick + alpha as the clock for scheduled hazards (online play interpolates over several ticks). */
-  render(alpha: number, dt: number, simTime?: number): void {
+  render(alpha: number, dt: number): void {
     const s = this.session;
     if (!s || !this.world || !this.entities) return;
     this.time += dt;
+    this.adaptResolution(dt);
     const st = s.state;
     const track = s.track;
     for (let i = 0; i < st.karts.length; i++) {
@@ -349,7 +374,7 @@ export class GameRenderer {
       if (gk && s.ghost?.active) this.ghost.update(gk, track, s.ghostPrev[0], s.ghostPrev[1], s.ghostPrev[2], s.ghostPrev[3], alpha, dt, this.time, this.particles);
       this.ghost.shadow.visible = false;
     }
-    this.entities.update(st, simTime ?? st.tick + alpha, alpha, this.time, this.particles);
+    this.entities.update(st, st.tick + alpha, alpha, this.time, this.particles);
     this.particles.update(dt);
     this.world.padTexture.offset.y -= dt * 2.5;
     if (this.world.liquid) {
